@@ -18,6 +18,6 @@ Automated installer for Solana validators using Rakurai.
 
 ```bash
 git clone https://github.com/GPvalidator/lowfee-rakurai-validator-installer.git
-cd lowfee-rakurai-installer
+cd lowfee-rakurai-validator-installer
 npm install
 npm start
