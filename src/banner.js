@@ -138,6 +138,10 @@ async function banner() {
     bannerPlain()
   }
 
+  if (process.env.LFV_NONINTERACTIVE === "1") {
+    return
+  }
+
   await pauseAfterBanner()
 }
 

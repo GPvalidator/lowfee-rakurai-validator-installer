@@ -1,6 +1,16 @@
 const inquirer = require("inquirer")
 
-async function chooseInstallMode() {
+async function chooseInstallMode(preset) {
+  if (preset) {
+    const allowed = ["scratch", "existing", "build"]
+
+    if (!allowed.includes(preset)) {
+      throw new Error(`Invalid install mode preset: ${preset}`)
+    }
+
+    return preset
+  }
+
   const answer = await inquirer.prompt([
     {
       type: "list",
@@ -12,11 +22,11 @@ async function chooseInstallMode() {
           value: "scratch"
         },
         {
-          name: "Add Rakurai to existing validator",
+          name: "Update existing validator",
           value: "existing"
         },
         {
-          name: "Build Rakurai only",
+          name: "Build Rakurai binary only",
           value: "build"
         }
       ]
