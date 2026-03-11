@@ -223,12 +223,14 @@ async function detectValidatorKeypair() {
     for (const file of found) {
       let pubkey = "unknown"
 
-      try {
-        const result = await run("solana-keygen", ["pubkey", file], { capture: true })
-        if (result) {
-          pubkey = result.toString().trim()
-        }
-      } catch {}
+  try {
+  const result = await run("solana-keygen", ["pubkey", file], { capture: true })
+  if (result) {
+    pubkey = result.toString().trim()
+  }
+} catch (err) {
+  console.log(`WARN: failed to read pubkey for ${file}: ${err.shortMessage || err.message}`)
+}
 
       choices.push({
         name: `${file} (${pubkey})`,

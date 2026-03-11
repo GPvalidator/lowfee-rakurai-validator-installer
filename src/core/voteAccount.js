@@ -72,17 +72,19 @@ async function detectVoteAccount(options = {}) {
     for (const file of found) {
       let pubkey = "unknown"
 
-      try {
-        const result = await run(
-          "solana-keygen",
-          ["pubkey", file],
-          { capture: true }
-        )
+     try {
+  const result = await run(
+    "solana-keygen",
+    ["pubkey", file],
+    { capture: true }
+  )
 
-        if (result) {
-          pubkey = result.toString().trim()
-        }
-      } catch {}
+  if (result) {
+    pubkey = result.toString().trim()
+  }
+} catch (err) {
+  console.log(`WARN: failed to read vote pubkey for ${file}: ${err.shortMessage || err.message}`)
+}
 
       choices.push({
         name: `${file} (${pubkey})`,
@@ -139,6 +141,10 @@ async function detectVoteAccount(options = {}) {
 
     votePubkey = manual.pubkey.trim()
   }
+
+if (!votePubkey || votePubkey === "unknown") {
+  throw new Error("Could not detect a valid vote pubkey. Please enter it manually.")
+}
 
   console.log(`Vote account: ${votePubkey}`)
 
