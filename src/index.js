@@ -1,3 +1,4 @@
+const syncLegacyBinary = require("./core/syncLegacyBinary")
 const getArgs = require("./utils/args")
 const startSystemdService = require("./core/startSystemdService")
 const generateSystemdService = require("./core/generateSystemdService")
@@ -94,6 +95,9 @@ async function main() {
       raaPubkey: raa.raaPubkey,
       signature: raa.signature
     })
+    
+    step("📦", "Sync validator binary to legacy path")
+    const legacyBinary = await syncLegacyBinary(repo)
 
     step("📝", "Generate Validator Start Script")
     const validatorScript = await generateValidatorScript({
@@ -138,6 +142,7 @@ async function main() {
       commission,
       raa,
       scheduler,
+      legacyBinary,
       validatorScript,
       systemdService
     })
