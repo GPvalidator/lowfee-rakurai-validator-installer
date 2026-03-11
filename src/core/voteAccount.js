@@ -2,6 +2,7 @@ const fs = require("fs")
 const path = require("path")
 const inquirer = require("inquirer")
 const run = require("../utils/run")
+const getSolanaBinary = require("../utils/solanaBin")
 
 const CYAN = "\x1b[36m"
 const RED = "\x1b[31m"
@@ -51,6 +52,9 @@ function findVoteKeypairs() {
 }
 
 async function detectVoteAccount(options = {}) {
+  const solanaKeygen = getSolanaBinary("solana-keygen")
+  console.log(`Using solana-keygen: ${solanaKeygen}`)
+
   const warningMessage = options.warningMessage || ""
 
   console.log("Searching for vote keypair files...")
@@ -72,19 +76,19 @@ async function detectVoteAccount(options = {}) {
     for (const file of found) {
       let pubkey = "unknown"
 
-     try {
-  const result = await run(
-    "solana-keygen",
-    ["pubkey", file],
-    { capture: true }
-  )
+      try {
+        const result = await run(
+          solanaKeygen,
+          ["pubkey", file],
+          { capture: true }
+        )
 
-  if (result) {
-    pubkey = result.toString().trim()
-  }
-} catch (err) {
-  console.log(`WARN: failed to read vote pubkey for ${file}: ${err.shortMessage || err.message}`)
-}
+        if (result) {
+          pubkey = result.toString().trim()
+        }
+      } catch (err) {
+        console.log(`WARN: failed to read vote pubkey for ${file}: ${err.shortMessage || err.message}`)
+      }
 
       choices.push({
         name: `${file} (${pubkey})`,
@@ -142,9 +146,9 @@ async function detectVoteAccount(options = {}) {
     votePubkey = manual.pubkey.trim()
   }
 
-if (!votePubkey || votePubkey === "unknown") {
-  throw new Error("Could not detect a valid vote pubkey. Please enter it manually.")
-}
+  if (!votePubkey || votePubkey === "unknown") {
+    throw new Error("Could not detect a valid vote pubkey. Please enter it manually.")
+  }
 
   console.log(`Vote account: ${votePubkey}`)
 
