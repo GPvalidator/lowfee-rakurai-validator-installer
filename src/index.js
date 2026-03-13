@@ -1,17 +1,3 @@
-
-  /*
-  ========================================================
-  SCRATCH MODE
-  ========================================================
-  */
-
-
-if (installMode === "scratch") {
-  step("📁", "Select Keypair Storage Directory")
-
-  const storageDirAnswer = await inquirer.prompt([
-    {
-      type: "list",
 const path = require("path")
 const waitForFunding = require("./core/waitForFunding")
 const syncLegacyBinary = require("./core/syncLegacyBinary")
