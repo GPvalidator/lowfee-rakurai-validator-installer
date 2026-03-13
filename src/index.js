@@ -177,7 +177,15 @@ async function main() {
     : await chooseRakuraiVersion()
 
   step("📂", "Setup Rakurai Repository")
-  const repo = await setupRakuraiRepo(rakuraiVersion)
+
+const repo = await setupRakuraiRepo(rakuraiVersion)
+
+if (installMode === "scratch") {
+  step("📁", "Select Keypair Storage Directory")
+
+  const storageDirAnswer = await inquirer.prompt([
+    {
+      type: "list",
       name: "storage",
       message: "Where do you want to store validator keypairs?",
       choices: [
@@ -196,6 +204,12 @@ async function main() {
       ]
     }
   ])
+
+keypairDir = storageDirAnswer.storage
+
+  if (keypairDir === "__BROWSE__") {
+    keypairDir = await pickDirectory("/root")
+  }
 
   let keypairDir = storageDirAnswer.storage
 
