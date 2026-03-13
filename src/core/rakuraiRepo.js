@@ -60,7 +60,8 @@ async function setupRakuraiRepo(version) {
     console.log("Repository already exists → updating")
 
     await run("git", ["fetch", "--all", "--tags"], { cwd: REPO })
-    await run("git", ["reset", "--hard"], { cwd: REPO })
+    await run("git", ["checkout", "main"], { cwd: REPO })
+    await run("git", ["reset", "--hard", "origin/main"], { cwd: REPO })
     await run("git", ["clean", "-fd"], { cwd: REPO })
   } else {
     console.log("Cloning Rakurai repository")
@@ -75,9 +76,9 @@ async function setupRakuraiRepo(version) {
 
   console.log("Checking out release branch:", releaseBranch)
 
+  await run("git", ["fetch", "--all", "--tags"], { cwd: REPO })
   await run("git", ["checkout", releaseBranch], { cwd: REPO })
 
-  // Optional cleanup from Rakurai docs for older states
   try {
     await run("git", ["rm", "--cached", "core/src/banking_stage/rakurai_scheduler"], { cwd: REPO })
   } catch {
