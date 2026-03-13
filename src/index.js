@@ -1,3 +1,17 @@
+
+  /*
+  ========================================================
+  SCRATCH MODE
+  ========================================================
+  */
+
+
+if (installMode === "scratch") {
+  step("📁", "Select Keypair Storage Directory")
+
+  const storageDirAnswer = await inquirer.prompt([
+    {
+      type: "list",
 const path = require("path")
 const waitForFunding = require("./core/waitForFunding")
 const syncLegacyBinary = require("./core/syncLegacyBinary")
@@ -6,7 +20,14 @@ const startSystemdService = require("./core/startSystemdService")
 const generateSystemdService = require("./core/generateSystemdService")
 const inquirer = require("inquirer")
 const generateValidatorScript = require("./core/generateValidatorScript")
-const { setupVoteAndWithdrawer, selectVoteAccount } = require("./core/voteAccount")
+
+const {
+  setupVoteAndWithdrawer,
+  selectVoteAccount,
+  selectAuthorizedWithdrawer,
+  buildCreateVoteAccountCommand
+} = require("./core/voteAccount")
+
 const chooseInstallMode = require("./core/installMode")
 const banner = require("./banner")
 const { step } = require("./ui")
@@ -35,7 +56,19 @@ const DEFAULT_SOLANA_CLI = "/root/.local/share/solana/install/active_release/bin
 const DEFAULT_BASE_DIR = "/root/solana/lfv"
 const DEFAULT_REWARDS_AUTHORITY = "H21wFgN53ghjDq5N9QhraAiPn1tRVYkobySj55unXLEj"
 
-async function promptExistingVoteAccount(keypairDir, warningMessage = null) {
+
+/*
+========================================================
+EXISTING MODE VOTE ACCOUNT HANDLING
+========================================================
+*/
+
+async function promptExistingVoteAccount({
+  keypairDir,
+  validator,
+  cluster,
+  warningMessage = null
+}) {
   if (warningMessage) {
     console.log("")
     console.log(warningMessage)
@@ -48,12 +81,86 @@ async function promptExistingVoteAccount(keypairDir, warningMessage = null) {
     outputDir: keypairDir
   })
 
+  if (!vote.needsCreateOnChain) {
+    return {
+      votePubkey: vote.votePubkey,
+      voteKeypair: vote.voteKeypair
+    }
+  }
+
+  console.log("")
+  console.log("A new vote account was selected. It will now be created on-chain.")
+  console.log("")
+
+  const withdrawer = await selectAuthorizedWithdrawer({
+    solanaKeygen: DEFAULT_SOLANA_KEYGEN,
+    searchDir: keypairDir,
+    outputDir: keypairDir,
+    validatorPubkey: validator.identityPubkey,
+    validatorKeypair: validator.identityKeypair
+  })
+
+  if (!withdrawer.authorizedWithdrawerKeypair) {
+    throw new Error(
+      "Creating a new vote account on-chain requires an authorized withdrawer keypair file."
+    )
+  }
+
+  await waitForFunding({
+    solanaPath: DEFAULT_SOLANA_CLI,
+    solanaKeygen: DEFAULT_SOLANA_KEYGEN,
+    rpcUrl: cluster.rpc,
+    feePayerKeypair: validator.identityKeypair,
+    minimumRequiredSol: 0.05,
+    pollIntervalMs: 5000
+  })
+
+  const createVoteAccountCommand = buildCreateVoteAccountCommand({
+    solanaPath: DEFAULT_SOLANA_CLI,
+    voteKeypair: vote.voteKeypair,
+    validatorKeypair: validator.identityKeypair,
+    authorizedWithdrawerKeypair: withdrawer.authorizedWithdrawerKeypair,
+    commission: 0,
+    rpcUrl: cluster.rpc
+  })
+
+  console.log("")
+  console.log(`${BOLD}${CYAN}Creating vote account on-chain...${RESET}`)
+  console.log("")
+
+  const { execSync } = require("child_process")
+
+  try {
+    execSync(createVoteAccountCommand, { stdio: "inherit" })
+  } catch (err) {
+    console.log("")
+    console.error("Failed to create vote account on-chain.")
+    console.error("You may need to run the following command manually:")
+    console.log("")
+    console.log(createVoteAccountCommand)
+    console.log("")
+    throw err
+  }
+
+  console.log("")
+  console.log(`${BOLD}${CYAN}Vote account successfully created on-chain.${RESET}`)
+  console.log("")
+
   return {
     votePubkey: vote.votePubkey,
     voteKeypair: vote.voteKeypair
   }
 }
+
+
+/*
+========================================================
+MAIN
+========================================================
+*/
+
 async function main() {
+
   await banner()
 
   step("🧭", "Select Installation Mode")
@@ -85,20 +192,6 @@ async function main() {
 
   step("📂", "Setup Rakurai Repository")
   const repo = await setupRakuraiRepo(rakuraiVersion)
-
-  /*
-  ========================================================
-  SCRATCH MODE
-  ========================================================
-  */
-
-
-if (installMode === "scratch") {
-  step("📁", "Select Keypair Storage Directory")
-
-  const storageDirAnswer = await inquirer.prompt([
-    {
-      type: "list",
       name: "storage",
       message: "Where do you want to store validator keypairs?",
       choices: [
@@ -284,93 +377,90 @@ const raa = await resolveRaa({
     return
   }
 
-  /*
-  ========================================================
-  EXISTING MODE
-  ========================================================
-  */
+/*
+========================================================
+EXISTING MODE
+========================================================
+*/
 
-  step("🔑", "Detect Validator Identity")
+step("🔑", "Detect Validator Identity")
+const validator = await detectValidatorKeypair()
 
-  const validator = await detectValidatorKeypair()
-
-  step("🗳️", "Select Vote Account")
-
+step("🗳️", "Select Vote Account")
 const keypairDir = path.dirname(validator.identityKeypair)
-let vote = await promptExistingVoteAccount(keypairDir)
 
-  step("💰", "Select Rakurai Commission")
-
-  const commission = args["commission-bps"]
-    ? await chooseCommission(args["commission-bps"])
-    : await chooseCommission()
-
-  step("📡", "Configure Rakurai Activation Account")
-
-  let raa
-
-  while (true) {
-    try {
-
-      raa = await resolveRaa({
-  programId: cluster.program,
-  rpcUrl: cluster.rpc,
-  identityKeypair: validator.identityKeypair,
-  identityPubkey: validator.identityPubkey,
-  votePubkey: vote.votePubkey,
-  commissionBps: commission.commissionBps,
-  repoDir: repo
+let vote = await promptExistingVoteAccount({
+  keypairDir,
+  validator,
+  cluster
 })
 
-      break
+step("💰", "Select Rakurai Commission")
+const commission = args["commission-bps"]
+  ? await chooseCommission(args["commission-bps"])
+  : await chooseCommission()
 
-    } catch (err) {
+step("📡", "Configure Rakurai Activation Account")
 
-      if (err.message === "VOTE_MISMATCH") {
+let raa
 
-       vote = await promptExistingVoteAccount(
-  keypairDir,
-  "Vote account belongs to another validator."
-)
+while (true) {
+  try {
+    raa = await resolveRaa({
+      programId: cluster.program,
+      rpcUrl: cluster.rpc,
+      identityKeypair: validator.identityKeypair,
+      identityPubkey: validator.identityPubkey,
+      votePubkey: vote.votePubkey,
+      commissionBps: commission.commissionBps,
+      repoDir: repo
+    })
 
-        continue
-      }
-
-      if (err.message === "VOTE_NOT_FOUND") {
-
-       vote = await promptExistingVoteAccount(
-  keypairDir,
-  "Vote account does not exist on selected cluster."
-)
-
-        continue
-      }
-
-      throw err
+    break
+  } catch (err) {
+    if (err.message === "VOTE_MISMATCH") {
+      vote = await promptExistingVoteAccount({
+        keypairDir,
+        validator,
+        cluster,
+        warningMessage: "Vote account belongs to another validator."
+      })
+      continue
     }
+
+    if (err.message === "VOTE_NOT_FOUND") {
+      vote = await promptExistingVoteAccount({
+        keypairDir,
+        validator,
+        cluster,
+        warningMessage: "Vote account does not exist on selected cluster."
+      })
+      continue
+    }
+
+    throw err
   }
+}
 
-  step("⚙️", "Install Scheduler")
+step("⚙️", "Install Scheduler")
+const scheduler = await setupScheduler({
+  osKey: os.osKey,
+  cluster: cluster.cluster,
+  repoDir: repo,
+  raaPubkey: raa.raaPubkey,
+  signature: raa.signature
+})
 
-  const scheduler = await setupScheduler({
-    osKey: os.osKey,
-    cluster: cluster.cluster,
-    repoDir: repo,
-    raaPubkey: raa.raaPubkey,
-    signature: raa.signature
-  })
+step("🩹", "Patch Validator Script")
+await patchValidatorScript({
+  programId: cluster.program,
+  rewardProgramId: cluster.rewardProgram,
+  rewardsAuthority: DEFAULT_REWARDS_AUTHORITY
+})
 
-  step("🩹", "Patch Validator Script")
-
-  await patchValidatorScript({
-    programId: cluster.program,
-    rewardProgramId: cluster.rewardProgram,
-    rewardsAuthority: DEFAULT_REWARDS_AUTHORITY
-  })
-
-  console.log("")
-  console.log("Installation completed.")
-  console.log("")
+console.log("")
+console.log("Installation completed.")
+console.log("")
 }
 
 main().catch(err => {
