@@ -1,3 +1,4 @@
+const path = require("path")
 const waitForFunding = require("./core/waitForFunding")
 const syncLegacyBinary = require("./core/syncLegacyBinary")
 const getArgs = require("./utils/args")
