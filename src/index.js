@@ -203,14 +203,16 @@ if (installMode === "scratch") {
 
     step("📡", "Configure Rakurai Activation Account")
 
-    const raa = await resolveRaa({
-      programId: cluster.program,
-      rpcUrl: cluster.rpc,
-      identityKeypair: validator.identityKeypair,
-      identityPubkey: validator.identityPubkey,
-      votePubkey: vote.votePubkey,
-      commissionBps: commission.commissionBps
-    })
+
+const raa = await resolveRaa({
+  programId: cluster.program,
+  rpcUrl: cluster.rpc,
+  identityKeypair: validator.identityKeypair,
+  identityPubkey: validator.identityPubkey,
+  votePubkey: vote.votePubkey,
+  commissionBps: commission.commissionBps,
+  repoDir: repo
+})
 
     step("⚙️", "Install Scheduler")
 
@@ -311,13 +313,14 @@ let vote = await promptExistingVoteAccount(keypairDir)
     try {
 
       raa = await resolveRaa({
-        programId: cluster.program,
-        rpcUrl: cluster.rpc,
-        identityKeypair: validator.identityKeypair,
-        identityPubkey: validator.identityPubkey,
-        votePubkey: vote.votePubkey,
-        commissionBps: commission.commissionBps
-      })
+  programId: cluster.program,
+  rpcUrl: cluster.rpc,
+  identityKeypair: validator.identityKeypair,
+  identityPubkey: validator.identityPubkey,
+  votePubkey: vote.votePubkey,
+  commissionBps: commission.commissionBps,
+  repoDir: repo
+})
 
       break
 

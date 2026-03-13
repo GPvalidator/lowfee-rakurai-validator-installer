@@ -57,6 +57,13 @@ async function setupRakuraiRepo(version) {
 
   await run("git", ["checkout", releaseBranch], { cwd: REPO })
 
+  // Rakurai docs mention this cleanup may be needed on older cloned states
+  try {
+    await run("git", ["rm", "--cached", "core/src/banking_stage/rakurai_scheduler"], { cwd: REPO })
+  } catch {
+    // ignore if not needed
+  }
+
   await run("git", ["submodule", "sync", "--recursive"], { cwd: REPO })
   await run("git", ["submodule", "update", "--init", "--recursive"], { cwd: REPO })
 
@@ -64,12 +71,21 @@ async function setupRakuraiRepo(version) {
 
   console.log("Rakurai repository ready:", REPO)
 
-  if (fs.existsSync(rakuraiActivationBinary)) {
-    console.log("Found rakurai-activation binary:", rakuraiActivationBinary)
-  } else {
-    console.log("WARNING: rakurai-activation binary not found yet at:", rakuraiActivationBinary)
-    console.log("The selected Rakurai release may not have downloaded the CLI artifacts in the expected location.")
+  if (!fs.existsSync(rakuraiActivationBinary)) {
+    console.log("")
+    console.log("Expected Rakurai CLI binary was not found:")
+    console.log(rakuraiActivationBinary)
+    console.log("")
+    throw new Error(
+      "Rakurai CLI setup failed. rakurai-activation was not found after clone/checkout/submodule update."
+    )
   }
+
+  try {
+    fs.chmodSync(rakuraiActivationBinary, 0o755)
+  } catch {}
+
+  console.log("Found rakurai-activation binary:", rakuraiActivationBinary)
 
   return REPO
 }
