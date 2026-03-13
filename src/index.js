@@ -34,7 +34,7 @@ const DEFAULT_SOLANA_CLI = "/root/.local/share/solana/install/active_release/bin
 const DEFAULT_BASE_DIR = "/root/solana/lfv"
 const DEFAULT_REWARDS_AUTHORITY = "H21wFgN53ghjDq5N9QhraAiPn1tRVYkobySj55unXLEj"
 
-async function promptExistingVoteAccount(warningMessage = null) {
+async function promptExistingVoteAccount(keypairDir, warningMessage = null) {
   if (warningMessage) {
     console.log("")
     console.log(warningMessage)
@@ -43,8 +43,8 @@ async function promptExistingVoteAccount(warningMessage = null) {
 
   const vote = await selectVoteAccount({
     solanaKeygen: DEFAULT_SOLANA_KEYGEN,
-    searchDir: DEFAULT_BASE_DIR,
-    outputDir: DEFAULT_BASE_DIR
+    searchDir: keypairDir,
+    outputDir: keypairDir
   })
 
   return {
@@ -52,7 +52,6 @@ async function promptExistingVoteAccount(warningMessage = null) {
     voteKeypair: vote.voteKeypair
   }
 }
-
 async function main() {
   await banner()
 
@@ -294,7 +293,8 @@ if (installMode === "scratch") {
 
   step("🗳️", "Select Vote Account")
 
-  let vote = await promptExistingVoteAccount()
+const keypairDir = path.dirname(validator.identityKeypair)
+let vote = await promptExistingVoteAccount(keypairDir)
 
   step("💰", "Select Rakurai Commission")
 
@@ -324,18 +324,20 @@ if (installMode === "scratch") {
 
       if (err.message === "VOTE_MISMATCH") {
 
-        vote = await promptExistingVoteAccount(
-          "Vote account belongs to another validator."
-        )
+       vote = await promptExistingVoteAccount(
+  keypairDir,
+  "Vote account belongs to another validator."
+)
 
         continue
       }
 
       if (err.message === "VOTE_NOT_FOUND") {
 
-        vote = await promptExistingVoteAccount(
-          "Vote account does not exist on selected cluster."
-        )
+       vote = await promptExistingVoteAccount(
+  keypairDir,
+  "Vote account does not exist on selected cluster."
+)
 
         continue
       }
