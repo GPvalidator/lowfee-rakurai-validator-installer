@@ -2,6 +2,7 @@ const axios = require("axios")
 const fs = require("fs")
 const path = require("path")
 const inquirer = require("inquirer")
+const { execSync } = require("child_process")
 const run = require("../utils/run")
 
 async function chooseSchedulerVersion(osKey, cluster) {
@@ -106,22 +107,25 @@ async function extractScheduler(repoDir) {
 }
 
 function detectLibclangPath() {
-  const candidates = [
-    "/usr/lib/llvm-18/lib",
-    "/usr/lib/llvm-17/lib",
-    "/usr/lib/llvm-16/lib",
-    "/usr/lib/llvm-15/lib",
-    "/usr/lib/llvm-14/lib",
+  const searchRoots = [
+    "/usr/lib",
+    "/usr/local/lib",
     "/usr/lib/x86_64-linux-gnu"
   ]
 
-  for (const dir of candidates) {
-    if (
-      fs.existsSync(path.join(dir, "libclang.so")) ||
-      fs.existsSync(path.join(dir, "libclang.so.1"))
-    ) {
-      return dir
-    }
+  for (const root of searchRoots) {
+    if (!fs.existsSync(root)) continue
+
+    try {
+      const found = execSync(
+        `find "${root}" -type f \$begin:math:text$ \-name \"libclang\.so\" \-o \-name \"libclang\.so\.\*\" \\$end:math:text$ 2>/dev/null | head -n 1`,
+        { encoding: "utf8" }
+      ).trim()
+
+      if (found) {
+        return path.dirname(found)
+      }
+    } catch {}
   }
 
   return ""
@@ -133,9 +137,9 @@ async function buildValidator(repoDir) {
   const libclangPath = detectLibclangPath()
 
   if (libclangPath) {
-    console.log("Using LIBCLANG_PATH:", libclangPath)
+    console.log("Detected LIBCLANG_PATH:", libclangPath)
   } else {
-    console.log("WARNING: libclang path was not auto-detected")
+    console.log("WARNING: libclang shared library not detected")
   }
 
   await run(
