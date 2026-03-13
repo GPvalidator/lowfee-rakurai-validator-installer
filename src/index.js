@@ -92,105 +92,108 @@ async function main() {
   ========================================================
   */
 
-  if (installMode === "scratch") {
 
-    step("📁", "Select Keypair Storage Directory")
+if (installMode === "scratch") {
+  step("📁", "Select Keypair Storage Directory")
 
-    const storageDirAnswer = await inquirer.prompt([
-      {
-        type: "list",
-        name: "storage",
-        message: "Where do you want to store validator keypairs?",
-        choices: [
-          {
-            name: "Installer data directory (recommended)",
-            value: "/root/node-script/lowfee-rakurai-installer/data"
-          },
-          {
-            name: "Validator directory",
-            value: "/root/solana/lfv"
-          },
-          {
-            name: "Browse filesystem",
-            value: "__BROWSE__"
-          }
-        ]
-      }
-    ])
+  const storageDirAnswer = await inquirer.prompt([
+    {
+      type: "list",
+      name: "storage",
+      message: "Where do you want to store validator keypairs?",
+      choices: [
+        {
+          name: "Installer data directory (recommended)",
+          value: "/root/node-script/lowfee-rakurai-installer/data"
+        },
+        {
+          name: "Validator directory",
+          value: "/root/solana/lfv"
+        },
+        {
+          name: "Browse filesystem",
+          value: "__BROWSE__"
+        }
+      ]
+    }
+  ])
 
-    let keypairDir = storageDirAnswer.storage
+  let keypairDir = storageDirAnswer.storage
 
-    if (keypairDir === "__BROWSE__") {
-      keypairDir = await pickDirectory("/root")
+  if (keypairDir === "__BROWSE__") {
+    keypairDir = await pickDirectory("/root")
+  }
+
+  console.log("")
+  console.log("Selected keypair directory:", keypairDir)
+  console.log("")
+
+  step("🔑", "Create Validator Identity")
+  const validator = await detectValidatorKeypair()
+
+  step("🏦", "Setup Vote Account & Authorized Withdrawer")
+
+  keypairDir = path.dirname(validator.identityKeypair)
+
+  const voteSetup = await setupVoteAndWithdrawer({
+    solanaKeygen: DEFAULT_SOLANA_KEYGEN,
+    solanaPath: DEFAULT_SOLANA_CLI,
+    rpcUrl: cluster.rpc,
+    searchDir: keypairDir,
+    outputDir: keypairDir,
+    validatorPubkey: validator.identityPubkey,
+    validatorKeypair: validator.identityKeypair,
+    commission: 0
+  })
+
+  if (!voteSetup.voteKeypair) {
+    throw new Error(
+      "Scratch mode requires a local vote account keypair."
+    )
+  }
+
+  if (voteSetup.createVoteAccountCommandReady && voteSetup.createVoteAccountCommand) {
+    console.log("")
+    console.log(`${BOLD}${CYAN}Creating vote account on-chain...${RESET}`)
+    console.log("")
+
+    await waitForFunding({
+      solanaPath: DEFAULT_SOLANA_CLI,
+      solanaKeygen: DEFAULT_SOLANA_KEYGEN,
+      rpcUrl: cluster.rpc,
+      feePayerKeypair: validator.identityKeypair,
+      minimumRequiredSol: 0.05,
+      pollIntervalMs: 5000
+    })
+
+    const { execSync } = require("child_process")
+
+    try {
+      execSync(voteSetup.createVoteAccountCommand, { stdio: "inherit" })
+    } catch (err) {
+      console.log("")
+      console.error("Failed to create vote account on-chain.")
+      console.error("You may need to run the following command manually:")
+      console.log("")
+      console.log(voteSetup.createVoteAccountCommand)
+      console.log("")
+      throw err
     }
 
     console.log("")
-    console.log("Selected keypair directory:", keypairDir)
+    console.log(`${BOLD}${CYAN}Vote account successfully created on-chain.${RESET}`)
     console.log("")
+  } else if (voteSetup.needsCreateVoteAccountOnChain) {
+    throw new Error(
+      voteSetup.createVoteAccountCommandReason ||
+        "Vote account still needs to be created on-chain before continuing."
+    )
+  }
 
-    step("🔑", "Create Validator Identity")
-    const validator = await detectValidatorKeypair()
-
-    step("🏦", "Setup Vote Account & Authorized Withdrawer")
-
-    const voteSetup = await setupVoteAndWithdrawer({
-  solanaKeygen: DEFAULT_SOLANA_KEYGEN,
-  solanaPath: DEFAULT_SOLANA_CLI,
-  rpcUrl: cluster.rpc,
-  searchDir: keypairDir,
-  outputDir: keypairDir,
-  validatorPubkey: validator.identityPubkey,
-  validatorKeypair: validator.identityKeypair,
-  commission: 0
-})
-
-    if (!voteSetup.voteKeypair) {
-      throw new Error(
-        "Scratch mode requires a local vote account keypair."
-      )
-    }
-
-if (voteSetup.createVoteAccountCommandReady && voteSetup.createVoteAccountCommand) {
-
-  console.log("")
-  console.log(`${BOLD}${CYAN}Creating vote account on-chain...${RESET}`)
-  console.log("")
-
-const { execSync } = require("child_process")
-
-await waitForFunding({
-  solanaPath: DEFAULT_SOLANA_CLI,
-  solanaKeygen: DEFAULT_SOLANA_KEYGEN,
-  rpcUrl: cluster.rpc,
-  feePayerKeypair: validator.identityKeypair,
-  minimumRequiredSol: 0.03,
-  pollIntervalMs: 5000
-})
-
-console.log("")
-console.log(`${BOLD}${CYAN}Creating vote account on-chain...${RESET}`)
-console.log("")
-
-try {
-  execSync(voteSetup.createVoteAccountCommand, { stdio: "inherit" })
-} catch (err) {
-  console.log("")
-  console.error("Failed to create vote account on-chain.")
-  console.error("You may need to run the following command manually:")
-  console.log("")
-  console.log(voteSetup.createVoteAccountCommand)
-  console.log("")
-  throw err
-}
-
-console.log("")
-console.log(`${BOLD}${CYAN}Vote account successfully created on-chain.${RESET}`)
-console.log("")
-}
-    const vote = {
-      votePubkey: voteSetup.votePubkey,
-      voteKeypair: voteSetup.voteKeypair
-    }
+  const vote = {
+    votePubkey: voteSetup.votePubkey,
+    voteKeypair: voteSetup.voteKeypair
+  }
 
     step("💰", "Select Rakurai Commission")
 
