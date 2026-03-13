@@ -1,19 +1,20 @@
 const run = require("../utils/run")
 
-async function installDeps(){
+async function installDeps() {
 
   console.log("Installing dependencies...")
 
-  await run("apt-get", ["update","-y"])
+  await run("apt-get", ["update", "-y"])
 
   await run("apt-get", [
-    "install","-y",
+    "install", "-y",
     "curl",
     "jq",
     "git",
     "build-essential",
     "pkg-config",
     "libssl-dev",
+    "libudev-dev",
     "llvm",
     "clang",
     "make",
