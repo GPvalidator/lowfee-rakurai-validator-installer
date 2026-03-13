@@ -1,11 +1,11 @@
+const waitForFunding = require("./core/waitForFunding")
 const syncLegacyBinary = require("./core/syncLegacyBinary")
 const getArgs = require("./utils/args")
 const startSystemdService = require("./core/startSystemdService")
 const generateSystemdService = require("./core/generateSystemdService")
 const inquirer = require("inquirer")
 const generateValidatorScript = require("./core/generateValidatorScript")
-const createAuthorizedWithdrawer = require("./core/authorizedWithdrawer")
-const createVoteAccount = require("./core/createVoteAccount")
+const { setupVoteAndWithdrawer, selectVoteAccount } = require("./core/voteAccount")
 const chooseInstallMode = require("./core/installMode")
 const banner = require("./banner")
 const { step } = require("./ui")
@@ -13,7 +13,6 @@ const patchValidatorScript = require("./core/validatorPatch")
 const setupScheduler = require("./core/scheduler")
 const resolveRaa = require("./core/raa")
 const chooseCommission = require("./core/commission")
-const detectVoteAccount = require("./core/voteAccount")
 const detectValidatorKeypair = require("./core/validatorKeypair")
 const detectOS = require("./core/os")
 const installDeps = require("./core/dependencies")
@@ -22,8 +21,37 @@ const installSolana = require("./core/solana")
 const chooseCluster = require("./core/cluster")
 const chooseRakuraiVersion = require("./core/rakuraiVersion")
 const setupRakuraiRepo = require("./core/rakuraiRepo")
+const pickDirectory = require("./utils/dirPicker")
+
+const CYAN = "\x1b[36m"
+const BOLD = "\x1b[1m"
+const RESET = "\x1b[0m"
 
 const args = getArgs()
+
+const DEFAULT_SOLANA_KEYGEN = "/root/.local/share/solana/install/active_release/bin/solana-keygen"
+const DEFAULT_SOLANA_CLI = "/root/.local/share/solana/install/active_release/bin/solana"
+const DEFAULT_BASE_DIR = "/root/solana/lfv"
+const DEFAULT_REWARDS_AUTHORITY = "H21wFgN53ghjDq5N9QhraAiPn1tRVYkobySj55unXLEj"
+
+async function promptExistingVoteAccount(warningMessage = null) {
+  if (warningMessage) {
+    console.log("")
+    console.log(warningMessage)
+    console.log("")
+  }
+
+  const vote = await selectVoteAccount({
+    solanaKeygen: DEFAULT_SOLANA_KEYGEN,
+    searchDir: DEFAULT_BASE_DIR,
+    outputDir: DEFAULT_BASE_DIR
+  })
+
+  return {
+    votePubkey: vote.votePubkey,
+    voteKeypair: vote.voteKeypair
+  }
+}
 
 async function main() {
   await banner()
@@ -58,26 +86,120 @@ async function main() {
   step("📂", "Setup Rakurai Repository")
   const repo = await setupRakuraiRepo(rakuraiVersion)
 
+  /*
+  ========================================================
+  SCRATCH MODE
+  ========================================================
+  */
+
   if (installMode === "scratch") {
+
+    step("📁", "Select Keypair Storage Directory")
+
+    const storageDirAnswer = await inquirer.prompt([
+      {
+        type: "list",
+        name: "storage",
+        message: "Where do you want to store validator keypairs?",
+        choices: [
+          {
+            name: "Installer data directory (recommended)",
+            value: "/root/node-script/lowfee-rakurai-installer/data"
+          },
+          {
+            name: "Validator directory",
+            value: "/root/solana/lfv"
+          },
+          {
+            name: "Browse filesystem",
+            value: "__BROWSE__"
+          }
+        ]
+      }
+    ])
+
+    let keypairDir = storageDirAnswer.storage
+
+    if (keypairDir === "__BROWSE__") {
+      keypairDir = await pickDirectory("/root")
+    }
+
+    console.log("")
+    console.log("Selected keypair directory:", keypairDir)
+    console.log("")
+
     step("🔑", "Create Validator Identity")
     const validator = await detectValidatorKeypair()
 
-    step("🏦", "Create Authorized Withdrawer")
-    const withdrawer = await createAuthorizedWithdrawer()
+    step("🏦", "Setup Vote Account & Authorized Withdrawer")
 
-    step("🗳️", "Create Vote Account")
-    const vote = await createVoteAccount({
-      validatorKeypair: validator.identityKeypair,
-      withdrawerKeypair: withdrawer.withdrawerKeypair,
-      rpcUrl: cluster.rpc
-    })
+    const voteSetup = await setupVoteAndWithdrawer({
+  solanaKeygen: DEFAULT_SOLANA_KEYGEN,
+  solanaPath: DEFAULT_SOLANA_CLI,
+  rpcUrl: cluster.rpc,
+  searchDir: keypairDir,
+  outputDir: keypairDir,
+  validatorPubkey: validator.identityPubkey,
+  validatorKeypair: validator.identityKeypair,
+  commission: 0
+})
+
+    if (!voteSetup.voteKeypair) {
+      throw new Error(
+        "Scratch mode requires a local vote account keypair."
+      )
+    }
+
+if (voteSetup.createVoteAccountCommandReady && voteSetup.createVoteAccountCommand) {
+
+  console.log("")
+  console.log(`${BOLD}${CYAN}Creating vote account on-chain...${RESET}`)
+  console.log("")
+
+const { execSync } = require("child_process")
+
+await waitForFunding({
+  solanaPath: DEFAULT_SOLANA_CLI,
+  solanaKeygen: DEFAULT_SOLANA_KEYGEN,
+  rpcUrl: cluster.rpc,
+  feePayerKeypair: validator.identityKeypair,
+  minimumRequiredSol: 0.03,
+  pollIntervalMs: 5000
+})
+
+console.log("")
+console.log(`${BOLD}${CYAN}Creating vote account on-chain...${RESET}`)
+console.log("")
+
+try {
+  execSync(voteSetup.createVoteAccountCommand, { stdio: "inherit" })
+} catch (err) {
+  console.log("")
+  console.error("Failed to create vote account on-chain.")
+  console.error("You may need to run the following command manually:")
+  console.log("")
+  console.log(voteSetup.createVoteAccountCommand)
+  console.log("")
+  throw err
+}
+
+console.log("")
+console.log(`${BOLD}${CYAN}Vote account successfully created on-chain.${RESET}`)
+console.log("")
+}
+    const vote = {
+      votePubkey: voteSetup.votePubkey,
+      voteKeypair: voteSetup.voteKeypair
+    }
 
     step("💰", "Select Rakurai Commission")
+
     const commission = args["commission-bps"]
       ? await chooseCommission(args["commission-bps"])
       : await chooseCommission()
 
     step("📡", "Configure Rakurai Activation Account")
+
     const raa = await resolveRaa({
       programId: cluster.program,
       rpcUrl: cluster.rpc,
@@ -88,6 +210,7 @@ async function main() {
     })
 
     step("⚙️", "Install Scheduler")
+
     const scheduler = await setupScheduler({
       osKey: os.osKey,
       cluster: cluster.cluster,
@@ -95,126 +218,94 @@ async function main() {
       raaPubkey: raa.raaPubkey,
       signature: raa.signature
     })
-    
+
     step("📦", "Sync validator binary to legacy path")
+
     const legacyBinary = await syncLegacyBinary(repo)
 
     step("📝", "Generate Validator Start Script")
+
     const validatorScript = await generateValidatorScript({
       cluster: cluster.cluster,
-      validatorBinary: `${repo}/target/release/agave-validator`,
+      validatorBinary: legacyBinary,
       validatorKeypair: validator.identityKeypair,
       voteKeypair: vote.voteKeypair,
       programId: cluster.program,
       rewardProgramId: cluster.rewardProgram,
-      rewardsAuthority: "H21wFgN53ghjDq5N9QhraAiPn1tRVYkobySj55unXLEj"
+      rewardsAuthority: DEFAULT_REWARDS_AUTHORITY
     })
 
-    step("🧩", "Generate systemd service")
-    const systemdService = await generateSystemdService({
-      validatorScriptPath: validatorScript.scriptPath || "/root/solana.sh"
+    step("🩹", "Patch Validator Script")
+
+    await patchValidatorScript({
+      scriptPath: validatorScript.scriptPath,
+      installMode,
+      cluster,
+      repoDir: repo,
+      legacyBinary,
+      identityKeypair: validator.identityKeypair,
+      identityPubkey: validator.identityPubkey,
+      voteKeypair: vote.voteKeypair,
+      votePubkey: vote.votePubkey,
+      commissionBps: commission.commissionBps,
+      raaPubkey: raa.raaPubkey
     })
 
-    const startAnswer = await inquirer.prompt([
+    step("🧩", "Generate Systemd Service")
+
+    const service = await generateSystemdService({
+      installMode,
+      cluster,
+      scriptPath: validatorScript.scriptPath
+    })
+
+    const { startNow } = await inquirer.prompt([
       {
         type: "confirm",
-        name: "startService",
-        message: "Start and enable solana.service now?",
-        default: false
+        name: "startNow",
+        message: "Start validator service now?",
+        default: true
       }
     ])
 
-    if (startAnswer.startService) {
-      step("🚦", "Start systemd service")
-      await startSystemdService(systemdService.servicePath || "/etc/systemd/system/solana.service")
+    if (startNow) {
+      step("▶️", "Start Systemd Service")
+      await startSystemdService(service.serviceName)
     }
 
-    console.log("--------------------------------------------------")
-    console.log("Configuration summary:")
-    console.log({
-      installMode,
-      cluster,
-      rakuraiVersion,
-      repo,
-      validator,
-      withdrawer,
-      vote,
-      commission,
-      raa,
-      scheduler,
-      legacyBinary,
-      validatorScript,
-      systemdService
-    })
-    console.log("--------------------------------------------------")
-
     console.log("")
-    console.log("Keypair locations:")
-    if (validator?.identityKeypair) {
-      console.log(`Validator keypair: ${validator.identityKeypair}`)
-    }
-    if (validator?.identitySeedPath) {
-      console.log(`Validator recovery seed: ${validator.identitySeedPath}`)
-    }
-    if (withdrawer?.withdrawerKeypair) {
-      console.log(`Authorized withdrawer keypair: ${withdrawer.withdrawerKeypair}`)
-    }
-    if (withdrawer?.withdrawerSeedPath) {
-      console.log(`Authorized withdrawer recovery seed: ${withdrawer.withdrawerSeedPath}`)
-    }
-    if (vote?.voteKeypair) {
-      console.log(`Vote keypair: ${vote.voteKeypair}`)
-    }
-    if (vote?.voteSeedPath) {
-      console.log(`Vote recovery seed: ${vote.voteSeedPath}`)
-    }
-    console.log("")
-
-    console.log("Recovery folder:")
-    console.log(`${process.cwd()}/data/recovery`)
-    console.log("")
-
-    console.log("Validator start script:")
-    console.log(validatorScript?.scriptPath || "/root/solana.sh")
-    console.log("")
-
-    console.log("Systemd service:")
-    console.log(systemdService?.servicePath || "/etc/systemd/system/solana.service")
-    console.log("")
-
-    console.log("Rakurai agave-validator binary:")
-    console.log(`${repo}/target/release/agave-validator`)
-    console.log("")
-
-    console.log("IMPORTANT:")
-    console.log("Backup the recovery files before running the validator.")
-    console.log("")
-
-    console.log("Next step:")
-    console.log("Run these commands:")
-    console.log("systemctl daemon-reload")
-    console.log("systemctl enable solana.service")
-    console.log("systemctl start solana.service")
+    console.log("✅ Low Fee Rakurai scratch installation completed.")
     console.log("")
     return
   }
 
+  /*
+  ========================================================
+  EXISTING MODE
+  ========================================================
+  */
+
   step("🔑", "Detect Validator Identity")
+
   const validator = await detectValidatorKeypair()
 
-  step("🗳️", "Detect Vote Account")
-  let vote = await detectVoteAccount()
+  step("🗳️", "Select Vote Account")
+
+  let vote = await promptExistingVoteAccount()
 
   step("💰", "Select Rakurai Commission")
+
   const commission = args["commission-bps"]
     ? await chooseCommission(args["commission-bps"])
     : await chooseCommission()
 
   step("📡", "Configure Rakurai Activation Account")
+
   let raa
 
   while (true) {
     try {
+
       raa = await resolveRaa({
         programId: cluster.program,
         rpcUrl: cluster.rpc,
@@ -223,21 +314,26 @@ async function main() {
         votePubkey: vote.votePubkey,
         commissionBps: commission.commissionBps
       })
+
       break
+
     } catch (err) {
+
       if (err.message === "VOTE_MISMATCH") {
-        step("🗳️", "Detect Vote Account")
-        vote = await detectVoteAccount({
-          warningMessage: "This vote account may belong to a different validator identity. Please choose another vote account."
-        })
+
+        vote = await promptExistingVoteAccount(
+          "Vote account belongs to another validator."
+        )
+
         continue
       }
 
       if (err.message === "VOTE_NOT_FOUND") {
-        step("🗳️", "Detect Vote Account")
-        vote = await detectVoteAccount({
-          warningMessage: "This vote account does not exist on the selected Solana cluster. Please choose another vote account."
-        })
+
+        vote = await promptExistingVoteAccount(
+          "Vote account does not exist on selected cluster."
+        )
+
         continue
       }
 
@@ -246,6 +342,7 @@ async function main() {
   }
 
   step("⚙️", "Install Scheduler")
+
   const scheduler = await setupScheduler({
     osKey: os.osKey,
     cluster: cluster.cluster,
@@ -254,66 +351,17 @@ async function main() {
     signature: raa.signature
   })
 
-  if (installMode === "existing") {
-    step("🧩", "Patch Validator Start Script")
-    await patchValidatorScript({
-      programId: cluster.program,
-      rewardProgramId: cluster.rewardProgram,
-      rewardsAuthority: "H21wFgN53ghjDq5N9QhraAiPn1tRVYkobySj55unXLEj"
-    })
-  }
+  step("🩹", "Patch Validator Script")
 
-  console.log("--------------------------------------------------")
-  console.log("Configuration summary:")
-  console.log({
-    installMode,
-    cluster,
-    rakuraiVersion,
-    repo,
-    validator,
-    vote,
-    commission,
-    raa,
-    scheduler
+  await patchValidatorScript({
+    programId: cluster.program,
+    rewardProgramId: cluster.rewardProgram,
+    rewardsAuthority: DEFAULT_REWARDS_AUTHORITY
   })
-  console.log("--------------------------------------------------")
 
   console.log("")
-  console.log("Keypair locations:")
-  if (validator?.identityKeypair) {
-    console.log(`Validator keypair: ${validator.identityKeypair}`)
-  }
-  if (validator?.identitySeedPath) {
-    console.log(`Validator recovery seed: ${validator.identitySeedPath}`)
-  }
-  if (vote?.voteKeypair) {
-    console.log(`Vote keypair: ${vote.voteKeypair}`)
-  }
-  if (vote?.voteSeedPath) {
-    console.log(`Vote recovery seed: ${vote.voteSeedPath}`)
-  }
+  console.log("Installation completed.")
   console.log("")
-
-  console.log("Recovery folder:")
-  console.log(`${process.cwd()}/data/recovery`)
-  console.log("")
-
-  console.log("Rakurai agave-validator binary:")
-  console.log(`${repo}/target/release/agave-validator`)
-  console.log("")
-
-  if (installMode === "existing") {
-    console.log("Next step:")
-    console.log("Replace or restart your validator using the Rakurai build above.")
-    console.log("")
-  }
-
-  if (installMode === "build") {
-    console.log("Next step:")
-    console.log("Rakurai binary has been built only.")
-    console.log("No validator script or systemd service was modified.")
-    console.log("")
-  }
 }
 
 main().catch(err => {

@@ -1,0 +1,258 @@
+const fs = require("fs")
+const path = require("path")
+const inquirer = require("inquirer")
+const run = require("../utils/run")
+const getSolanaBinary = require("../utils/solanaBin")
+
+const CYAN = "\x1b[36m"
+const RED = "\x1b[31m"
+const BOLD = "\x1b[1m"
+const RESET = "\x1b[0m"
+
+function findVoteKeypairs() {
+  const searchRoots = [process.cwd(), "/root", "/home", "/opt", "/mnt"]
+  const candidateNames = [
+    "vote-account.json",
+    "vote-keypair.json",
+    "vote-account-keypair.json"
+  ]
+
+  const found = []
+
+  function walk(dir, depth = 0) {
+    if (!fs.existsSync(dir) || depth > 6) return
+
+    let entries = []
+    try {
+      entries = fs.readdirSync(dir)
+    } catch {
+      return
+    }
+
+    for (const entry of entries) {
+      const full = path.join(dir, entry)
+
+      try {
+        const stat = fs.statSync(full)
+
+        if (stat.isDirectory()) {
+          walk(full, depth + 1)
+        } else if (candidateNames.includes(entry)) {
+          found.push(full)
+        }
+      } catch {}
+    }
+  }
+
+  for (const root of searchRoots) {
+    walk(root, 0)
+  }
+
+  return [...new Set(found)]
+}
+
+async function readPubkeyFromKeypair(solanaKeygen, file) {
+  const result = await run(
+    solanaKeygen,
+    ["pubkey", file],
+    { capture: true }
+  )
+
+  return result.toString().trim()
+}
+
+async function createNewVoteKeypair(solanaKeygen) {
+  const answer = await inquirer.prompt([
+    {
+      type: "input",
+      name: "file",
+      message: `${BOLD}${CYAN}Path for new vote keypair:${RESET}`,
+      default: "/root/vote-account-keypair.json",
+      validate: input =>
+        input && input.trim().length > 0
+          ? true
+          : "Vote keypair path cannot be empty"
+    }
+  ])
+
+  const voteKeypair = answer.file.trim()
+
+  if (fs.existsSync(voteKeypair)) {
+    const overwrite = await inquirer.prompt([
+      {
+        type: "confirm",
+        name: "ok",
+        message: `File already exists: ${voteKeypair}. Overwrite it?`,
+        default: false
+      }
+    ])
+
+    if (!overwrite.ok) {
+      throw new Error("Vote keypair creation cancelled by user.")
+    }
+
+    fs.rmSync(voteKeypair, { force: true })
+  }
+
+  console.log("")
+  console.log(`${CYAN}Creating new vote keypair...${RESET}`)
+  console.log(`Path: ${voteKeypair}`)
+
+  await run(
+    solanaKeygen,
+    ["new", "--no-bip39-passphrase", "-o", voteKeypair],
+    { stdio: "inherit" }
+  )
+
+  const votePubkey = await readPubkeyFromKeypair(solanaKeygen, voteKeypair)
+
+  console.log(`Created vote keypair: ${voteKeypair}`)
+  console.log(`Vote pubkey: ${votePubkey}`)
+
+  return {
+    votePubkey,
+    voteKeypair,
+    needsCreateOnChain: true
+  }
+}
+
+async function promptManualVotePubkey() {
+  const manual = await inquirer.prompt([
+    {
+      type: "input",
+      name: "pubkey",
+      message: `${BOLD}${CYAN}Enter vote pubkey:${RESET}`,
+      validate: input =>
+        input && input.trim().length > 0
+          ? true
+          : "Vote pubkey cannot be empty"
+    }
+  ])
+
+  return {
+    votePubkey: manual.pubkey.trim(),
+    voteKeypair: "",
+    needsCreateOnChain: false
+  }
+}
+
+async function detectVoteAccount(options = {}) {
+  const solanaKeygen = getSolanaBinary("solana-keygen")
+  console.log(`Using solana-keygen: ${solanaKeygen}`)
+
+  const warningMessage = options.warningMessage || ""
+
+  console.log("Searching for vote keypair files...")
+
+  if (warningMessage) {
+    console.log("")
+    console.log(`${RED}WARNING:${RESET} ${warningMessage}`)
+    console.log("")
+  }
+
+  const found = findVoteKeypairs()
+
+  let votePubkey = ""
+  let voteKeypair = ""
+  let needsCreateOnChain = false
+
+  if (found.length > 0) {
+    const choices = []
+
+    for (const file of found) {
+      let pubkey = "unknown"
+
+      try {
+        pubkey = await readPubkeyFromKeypair(solanaKeygen, file)
+      } catch (err) {
+        console.log(`WARN: failed to read vote pubkey for ${file}: ${err.shortMessage || err.message}`)
+      }
+
+      choices.push({
+        name: `${file} (${pubkey})`,
+        value: { mode: "detected", file, pubkey }
+      })
+    }
+
+    choices.push({
+      name: "Enter existing vote pubkey manually",
+      value: { mode: "manual" }
+    })
+
+    choices.push({
+      name: "Create new vote account keypair",
+      value: { mode: "create" }
+    })
+
+    const answer = await inquirer.prompt([
+      {
+        type: "list",
+        name: "vote",
+        message: `${BOLD}${CYAN}Select vote account option:${RESET}`,
+        choices
+      }
+    ])
+
+    if (answer.vote.mode === "manual") {
+      const manual = await promptManualVotePubkey()
+      votePubkey = manual.votePubkey
+      voteKeypair = manual.voteKeypair
+      needsCreateOnChain = manual.needsCreateOnChain
+    } else if (answer.vote.mode === "create") {
+      const created = await createNewVoteKeypair(solanaKeygen)
+      votePubkey = created.votePubkey
+      voteKeypair = created.voteKeypair
+      needsCreateOnChain = created.needsCreateOnChain
+    } else {
+      voteKeypair = answer.vote.file
+      votePubkey = answer.vote.pubkey
+      needsCreateOnChain = false
+    }
+  } else {
+    console.log("No vote keypair detected automatically.")
+
+    const answer = await inquirer.prompt([
+      {
+        type: "list",
+        name: "mode",
+        message: `${BOLD}${CYAN}Choose vote account option:${RESET}`,
+        choices: [
+          {
+            name: "Enter existing vote pubkey manually",
+            value: "manual"
+          },
+          {
+            name: "Create new vote account keypair",
+            value: "create"
+          }
+        ]
+      }
+    ])
+
+    if (answer.mode === "manual") {
+      const manual = await promptManualVotePubkey()
+      votePubkey = manual.votePubkey
+      voteKeypair = manual.voteKeypair
+      needsCreateOnChain = manual.needsCreateOnChain
+    } else {
+      const created = await createNewVoteKeypair(solanaKeygen)
+      votePubkey = created.votePubkey
+      voteKeypair = created.voteKeypair
+      needsCreateOnChain = created.needsCreateOnChain
+    }
+  }
+
+  if (!votePubkey || votePubkey === "unknown") {
+    throw new Error("Could not detect a valid vote pubkey. Please enter it manually or create a new one.")
+  }
+
+  console.log(`Vote account: ${votePubkey}`)
+
+  return {
+    votePubkey,
+    voteKeypair,
+    needsCreateOnChain
+  }
+}
+
+module.exports = detectVoteAccount
