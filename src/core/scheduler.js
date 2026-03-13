@@ -107,6 +107,10 @@ async function extractScheduler(repoDir) {
 }
 
 function detectLibclangPath() {
+  if (process.env.LIBCLANG_PATH && fs.existsSync(process.env.LIBCLANG_PATH)) {
+    return process.env.LIBCLANG_PATH
+  }
+
   const searchRoots = [
     "/usr/lib",
     "/usr/local/lib",
@@ -122,7 +126,7 @@ function detectLibclangPath() {
         { encoding: "utf8" }
       ).trim()
 
-      if (found) {
+      if (found && fs.existsSync(found)) {
         return path.dirname(found)
       }
     } catch {}
