@@ -1,5 +1,6 @@
 const fs = require("fs")
 const path = require("path")
+const { execSync } = require("child_process")
 const run = require("../utils/run")
 
 const WORKDIR = "/opt/lowfee-rakurai"
@@ -17,14 +18,33 @@ function normalizeReleaseBranch(version) {
   return `release/${version}`
 }
 
-function getRakuraiActivationBinary(repoDir) {
-  return path.join(
-    repoDir,
-    "rakurai_programs",
-    "release",
-    "downloads",
-    "rakurai-activation"
-  )
+function findRakuraiActivationBinary(repoDir) {
+  const exactCandidates = [
+    path.join(repoDir, "rakurai_programs", "release", "downloads", "rakurai-activation"),
+    path.join(repoDir, "target", "release", "rakurai-activation")
+  ]
+
+  for (const candidate of exactCandidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  try {
+    const found = execSync(
+      `find "${repoDir}" -type f -name "rakurai-activation" 2>/dev/null | head -n 1`,
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"]
+      }
+    ).trim()
+
+    if (found && fs.existsSync(found)) {
+      return found
+    }
+  } catch {}
+
+  return ""
 }
 
 async function setupRakuraiRepo(version) {
@@ -57,24 +77,33 @@ async function setupRakuraiRepo(version) {
 
   await run("git", ["checkout", releaseBranch], { cwd: REPO })
 
-  // Rakurai docs mention this cleanup may be needed on older cloned states
+  // Optional cleanup from Rakurai docs for older states
   try {
     await run("git", ["rm", "--cached", "core/src/banking_stage/rakurai_scheduler"], { cwd: REPO })
   } catch {
-    // ignore if not needed
+    // ignore if path does not exist
   }
+
+  // Clean submodules hard in case repo already existed and they are dirty
+  try {
+    await run("git", ["submodule", "foreach", "--recursive", "git", "reset", "--hard"], { cwd: REPO })
+  } catch {}
+
+  try {
+    await run("git", ["submodule", "foreach", "--recursive", "git", "clean", "-fdx"], { cwd: REPO })
+  } catch {}
 
   await run("git", ["submodule", "sync", "--recursive"], { cwd: REPO })
   await run("git", ["submodule", "update", "--init", "--recursive"], { cwd: REPO })
 
-  const rakuraiActivationBinary = getRakuraiActivationBinary(REPO)
+  const rakuraiActivationBinary = findRakuraiActivationBinary(REPO)
 
   console.log("Rakurai repository ready:", REPO)
 
-  if (!fs.existsSync(rakuraiActivationBinary)) {
+  if (!rakuraiActivationBinary) {
     console.log("")
-    console.log("Expected Rakurai CLI binary was not found:")
-    console.log(rakuraiActivationBinary)
+    console.log("Expected Rakurai CLI binary was not found anywhere inside the repo.")
+    console.log("Repo searched:", REPO)
     console.log("")
     throw new Error(
       "Rakurai CLI setup failed. rakurai-activation was not found after clone/checkout/submodule update."
