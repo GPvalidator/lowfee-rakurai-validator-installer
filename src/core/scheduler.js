@@ -105,13 +105,49 @@ async function extractScheduler(repoDir) {
   return dst
 }
 
+function detectLibclangPath() {
+  const candidates = [
+    "/usr/lib/llvm-18/lib",
+    "/usr/lib/llvm-17/lib",
+    "/usr/lib/llvm-16/lib",
+    "/usr/lib/llvm-15/lib",
+    "/usr/lib/llvm-14/lib",
+    "/usr/lib/x86_64-linux-gnu"
+  ]
+
+  for (const dir of candidates) {
+    if (
+      fs.existsSync(path.join(dir, "libclang.so")) ||
+      fs.existsSync(path.join(dir, "libclang.so.1"))
+    ) {
+      return dir
+    }
+  }
+
+  return ""
+}
+
 async function buildValidator(repoDir) {
   console.log("Building validator with Rakurai")
+
+  const libclangPath = detectLibclangPath()
+
+  if (libclangPath) {
+    console.log("Using LIBCLANG_PATH:", libclangPath)
+  } else {
+    console.log("WARNING: libclang path was not auto-detected")
+  }
 
   await run(
     "cargo",
     ["build", "--release", "--features", "build_validator"],
-    { cwd: repoDir }
+    {
+      cwd: repoDir,
+      env: {
+        ...process.env,
+        ...(libclangPath ? { LIBCLANG_PATH: libclangPath } : {})
+      }
+    }
   )
 }
 
