@@ -37,11 +37,11 @@ const RESET = "\x1b[0m"
 
 const args = getArgs()
 
+const INSTALLER_DATA_DIR = path.resolve(process.cwd(), "data")
 const DEFAULT_SOLANA_KEYGEN = "/root/.local/share/solana/install/active_release/bin/solana-keygen"
 const DEFAULT_SOLANA_CLI = "/root/.local/share/solana/install/active_release/bin/solana"
 const DEFAULT_BASE_DIR = "/root/solana/lfv"
 const DEFAULT_REWARDS_AUTHORITY = "H21wFgN53ghjDq5N9QhraAiPn1tRVYkobySj55unXLEj"
-
 
 /*
 ========================================================
@@ -190,12 +190,8 @@ if (installMode === "scratch") {
       message: "Where do you want to store validator keypairs?",
       choices: [
         {
-          name: "Installer data directory (recommended)",
-          value: "/root/node-script/lowfee-rakurai-installer/data"
-        },
-        {
-          name: "Validator directory",
-          value: "/root/solana/lfv"
+          name: `Installer data directory (recommended) (${INSTALLER_DATA_DIR})`,
+          value: INSTALLER_DATA_DIR
         },
         {
           name: "Browse filesystem",
@@ -204,12 +200,6 @@ if (installMode === "scratch") {
       ]
     }
   ])
-
-keypairDir = storageDirAnswer.storage
-
-  if (keypairDir === "__BROWSE__") {
-    keypairDir = await pickDirectory("/root")
-  }
 
   let keypairDir = storageDirAnswer.storage
 
@@ -224,10 +214,10 @@ keypairDir = storageDirAnswer.storage
   step("🔑", "Create Validator Identity")
   const validator = await detectValidatorKeypair()
 
-  step("🏦", "Setup Vote Account & Authorized Withdrawer")
-
+  // use the actual validator keypair directory as the real source of truth
   keypairDir = path.dirname(validator.identityKeypair)
 
+  step("🏦", "Setup Vote Account & Authorized Withdrawer")
   const voteSetup = await setupVoteAndWithdrawer({
     solanaKeygen: DEFAULT_SOLANA_KEYGEN,
     solanaPath: DEFAULT_SOLANA_CLI,
