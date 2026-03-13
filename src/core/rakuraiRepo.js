@@ -19,12 +19,12 @@ function normalizeReleaseBranch(version) {
 }
 
 function findRakuraiActivationBinary(repoDir) {
-  const exactCandidates = [
+  const candidates = [
     path.join(repoDir, "rakurai_programs", "release", "downloads", "rakurai-activation"),
     path.join(repoDir, "target", "release", "rakurai-activation")
   ]
 
-  for (const candidate of exactCandidates) {
+  for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
       return candidate
     }
@@ -33,10 +33,7 @@ function findRakuraiActivationBinary(repoDir) {
   try {
     const found = execSync(
       `find "${repoDir}" -type f -name "rakurai-activation" 2>/dev/null | head -n 1`,
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"]
-      }
+      { encoding: "utf8" }
     ).trim()
 
     if (found && fs.existsSync(found)) {
@@ -60,9 +57,14 @@ async function setupRakuraiRepo(version) {
     console.log("Repository already exists → updating")
 
     await run("git", ["fetch", "--all", "--tags"], { cwd: REPO })
-    await run("git", ["checkout", "main"], { cwd: REPO })
+
+    // clean local build changes first
+    await run("git", ["reset", "--hard"], { cwd: REPO })
+    await run("git", ["clean", "-fdx"], { cwd: REPO })
+
+    await run("git", ["checkout", "-f", "main"], { cwd: REPO })
     await run("git", ["reset", "--hard", "origin/main"], { cwd: REPO })
-    await run("git", ["clean", "-fd"], { cwd: REPO })
+    await run("git", ["clean", "-fdx"], { cwd: REPO })
   } else {
     console.log("Cloning Rakurai repository")
 
@@ -77,15 +79,17 @@ async function setupRakuraiRepo(version) {
   console.log("Checking out release branch:", releaseBranch)
 
   await run("git", ["fetch", "--all", "--tags"], { cwd: REPO })
-  await run("git", ["checkout", releaseBranch], { cwd: REPO })
+  await run("git", ["checkout", "-f", releaseBranch], { cwd: REPO })
+  await run("git", ["reset", "--hard"], { cwd: REPO })
+  await run("git", ["clean", "-fdx"], { cwd: REPO })
 
   try {
     await run("git", ["rm", "--cached", "core/src/banking_stage/rakurai_scheduler"], { cwd: REPO })
   } catch {
-    // ignore if path does not exist
+    // ignore if path not present
   }
 
-  // Clean submodules hard in case repo already existed and they are dirty
+  // clean submodules completely
   try {
     await run("git", ["submodule", "foreach", "--recursive", "git", "reset", "--hard"], { cwd: REPO })
   } catch {}
