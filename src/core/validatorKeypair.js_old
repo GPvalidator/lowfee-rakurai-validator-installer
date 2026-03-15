@@ -2,6 +2,7 @@ const fs = require("fs")
 const path = require("path")
 const inquirer = require("inquirer")
 const run = require("../utils/run")
+const getSolanaBinary = require("../utils/solanaBin")
 
 const CYAN = "\x1b[36m"
 const YELLOW = "\x1b[33m"
@@ -62,6 +63,9 @@ function findValidatorKeypairs() {
 }
 
 async function createNewValidatorKeypair() {
+  const solanaKeygen = getSolanaBinary("solana-keygen")
+  console.log(`Using solana-keygen: ${solanaKeygen}`)
+
   console.log("")
   console.log("Creating a new validator keypair")
   console.log(`${YELLOW}WARNING:${RESET} the recovery seed phrase is highly sensitive. Keep it secure.`)
@@ -136,7 +140,7 @@ async function createNewValidatorKeypair() {
   fs.mkdirSync(keypairDir, { recursive: true })
 
   const output = await run(
-    "solana-keygen",
+    solanaKeygen,
     [
       "new",
       "--no-bip39-passphrase",
@@ -157,7 +161,7 @@ async function createNewValidatorKeypair() {
 
   try {
     const pubkeyOut = await run(
-      "solana-keygen",
+      solanaKeygen,
       ["pubkey", keypairPath],
       { capture: true }
     )
@@ -165,7 +169,9 @@ async function createNewValidatorKeypair() {
     if (pubkeyOut) {
       identityPubkey = pubkeyOut.toString().trim()
     }
-  } catch {}
+  } catch (err) {
+    console.log(`WARN: failed to read validator pubkey for ${keypairPath}: ${err.shortMessage || err.message}`)
+  }
 
   const seedPhrase = extractSeedPhrase(output)
 
@@ -211,6 +217,9 @@ async function createNewValidatorKeypair() {
 }
 
 async function detectValidatorKeypair() {
+  const solanaKeygen = getSolanaBinary("solana-keygen")
+  console.log(`Using solana-keygen: ${solanaKeygen}`)
+
   console.log("Searching for validator keypair files...")
 
   const found = findValidatorKeypairs()
@@ -223,14 +232,14 @@ async function detectValidatorKeypair() {
     for (const file of found) {
       let pubkey = "unknown"
 
-  try {
-  const result = await run("solana-keygen", ["pubkey", file], { capture: true })
-  if (result) {
-    pubkey = result.toString().trim()
-  }
-} catch (err) {
-  console.log(`WARN: failed to read pubkey for ${file}: ${err.shortMessage || err.message}`)
-}
+      try {
+        const result = await run(solanaKeygen, ["pubkey", file], { capture: true })
+        if (result) {
+          pubkey = result.toString().trim()
+        }
+      } catch (err) {
+        console.log(`WARN: failed to read pubkey for ${file}: ${err.shortMessage || err.message}`)
+      }
 
       choices.push({
         name: `${file} (${pubkey})`,
@@ -312,7 +321,7 @@ async function detectValidatorKeypair() {
 
   try {
     const result = await run(
-      "solana-keygen",
+      solanaKeygen,
       ["pubkey", identityKeypair],
       { capture: true }
     )
@@ -320,7 +329,9 @@ async function detectValidatorKeypair() {
     if (result) {
       identityPubkey = result.toString().trim()
     }
-  } catch {}
+  } catch (err) {
+    console.log(`WARN: failed to read validator pubkey for ${identityKeypair}: ${err.shortMessage || err.message}`)
+  }
 
   console.log("Validator identity:", identityPubkey)
 

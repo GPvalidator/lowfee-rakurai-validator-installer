@@ -27,9 +27,18 @@ function ensureDir(dirPath) {
 
 function isJsonKeypairFile(filePath) {
   try {
+    if (!fileExists(filePath)) return false
+
     const raw = fs.readFileSync(filePath, "utf8")
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) && parsed.length >= 64
+
+    return (
+      Array.isArray(parsed) &&
+      parsed.length === 64 &&
+      parsed.every(
+        (n) => Number.isInteger(n) && n >= 0 && n <= 255
+      )
+    )
   } catch {
     return false
   }
@@ -41,16 +50,24 @@ function isLikelyPubkey(value) {
 }
 
 function getPubkeyFromKeypair(solanaKeygen, keypairPath) {
-  const pubkey = execSync(
-    `"${solanaKeygen}" pubkey "${keypairPath}"`,
-    { encoding: "utf8" }
-  ).trim()
+  try {
+    const pubkey = execSync(
+      `"${solanaKeygen}" pubkey "${keypairPath}"`,
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"]
+      }
+    ).trim()
 
-  if (!isLikelyPubkey(pubkey)) {
-    throw new Error(`Invalid pubkey derived from ${keypairPath}`)
+    if (!isLikelyPubkey(pubkey)) {
+      throw new Error(`Invalid pubkey`)
+    }
+
+    return pubkey
+
+  } catch {
+    throw new Error("Invalid keypair")
   }
-
-  return pubkey
 }
 
 function scanKeypairs(solanaKeygen) {
@@ -58,10 +75,13 @@ function scanKeypairs(solanaKeygen) {
   let files = []
 
   try {
-
     const out = execSync(
       `find / -type f -name "*.json" 2>/dev/null`,
-      { encoding: "utf8", maxBuffer: 50 * 1024 * 1024 }
+      {
+        encoding: "utf8",
+        maxBuffer: 100 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "ignore"]
+      }
     )
 
     files = out.split("\n").map(x => x.trim()).filter(Boolean)
@@ -69,6 +89,31 @@ function scanKeypairs(solanaKeygen) {
   } catch {
     return []
   }
+
+  const results = []
+
+  for (const file of files) {
+
+    if (!isJsonKeypairFile(file)) continue
+
+    try {
+
+      const pubkey = getPubkeyFromKeypair(solanaKeygen, file)
+
+      results.push({
+        file,
+        name: path.basename(file),
+        pubkey
+      })
+
+    } catch {
+      // ignorar silenciosamente
+    }
+
+  }
+
+  return [...new Map(results.map(x => [x.file, x])).values()]
+}
 
   const results = []
 
