@@ -107,32 +107,32 @@ async function extractScheduler(repoDir) {
 }
 
 function detectLibclangPath() {
-  if (process.env.LIBCLANG_PATH && fs.existsSync(process.env.LIBCLANG_PATH)) {
-    return process.env.LIBCLANG_PATH
-  }
+  try {
+    const found = execSync(
+      `find /usr -type f \$begin:math:text$ \-name \"libclang\.so\" \-o \-name \"libclang\.so\.\*\" \\$end:math:text$ 2>/dev/null | head -n 1`,
+      { encoding: "utf8" }
+    ).trim()
 
-  const searchRoots = [
-    "/usr/lib",
-    "/usr/local/lib",
-    "/usr/lib/x86_64-linux-gnu"
-  ]
-
-  for (const root of searchRoots) {
-    if (!fs.existsSync(root)) continue
-
-    try {
-      const found = execSync(
-        `find "${root}" -type f \$begin:math:text$ \-name \"libclang\.so\" \-o \-name \"libclang\.so\.\*\" \\$end:math:text$ 2>/dev/null | head -n 1`,
-        { encoding: "utf8" }
-      ).trim()
-
-      if (found && fs.existsSync(found)) {
-        return path.dirname(found)
-      }
-    } catch {}
-  }
+    if (found) {
+      return path.dirname(found)
+    }
+  } catch {}
 
   return ""
+}
+
+function ensureLibclangSymlink(libclangPath) {
+  const so = path.join(libclangPath, "libclang.so")
+  const so1 = path.join(libclangPath, "libclang.so.1")
+
+  try {
+    if (!fs.existsSync(so) && fs.existsSync(so1)) {
+      console.log("Creating libclang.so symlink")
+      fs.symlinkSync("libclang.so.1", so)
+    }
+  } catch (err) {
+    console.log("Warning creating libclang symlink:", err.message)
+  }
 }
 
 async function buildValidator(repoDir) {
@@ -140,11 +140,13 @@ async function buildValidator(repoDir) {
 
   const libclangPath = detectLibclangPath()
 
-  if (libclangPath) {
-    console.log("Detected LIBCLANG_PATH:", libclangPath)
-  } else {
-    console.log("WARNING: libclang shared library not detected")
+  if (!libclangPath) {
+    throw new Error("libclang shared library not detected")
   }
+
+  console.log("Detected LIBCLANG_PATH:", libclangPath)
+
+  ensureLibclangSymlink(libclangPath)
 
   await run(
     "cargo",
@@ -153,7 +155,7 @@ async function buildValidator(repoDir) {
       cwd: repoDir,
       env: {
         ...process.env,
-        ...(libclangPath ? { LIBCLANG_PATH: libclangPath } : {})
+        LIBCLANG_PATH: libclangPath
       }
     }
   )
@@ -183,3 +185,4 @@ async function setupScheduler(ctx) {
 }
 
 module.exports = setupScheduler
+
