@@ -8,6 +8,9 @@ const YELLOW = "\x1b[33m"
 const BOLD = "\x1b[1m"
 const RESET = "\x1b[0m"
 
+const SOLANA_DATA_DIR = "/var/lib/solana"
+const SOLANA_RECOVERY_DIR = "/var/lib/solana/recovery"
+
 function extractSeedPhrase(output) {
   const match = output
     ? output.toString().match(/recover your new keypair:\s*([\s\S]*?)=+/i)
@@ -26,13 +29,17 @@ async function createAuthorizedWithdrawer() {
   console.log(`${YELLOW}WARNING:${RESET} keep this key secure.`)
   console.log("")
 
-  const dataDir = path.join(process.cwd(), "data")
-  const recoveryDir = path.join(dataDir, "recovery")
+  const dataDir = SOLANA_DATA_DIR
+  const recoveryDir = SOLANA_RECOVERY_DIR
   const defaultPath = path.join(dataDir, "authorized-withdrawer-keypair.json")
   const defaultSeedPath = path.join(recoveryDir, "authorized-withdrawer-seed.txt")
 
   fs.mkdirSync(dataDir, { recursive: true })
   fs.mkdirSync(recoveryDir, { recursive: true })
+
+  try {
+    fs.chmodSync(dataDir, 0o700)
+  } catch {}
 
   const answer = await inquirer.prompt([
     {
@@ -43,7 +50,7 @@ async function createAuthorizedWithdrawer() {
     }
   ])
 
-  const keypairPath = answer.path || defaultPath
+  const keypairPath = (answer.path || defaultPath).trim()
   fs.mkdirSync(path.dirname(keypairPath), { recursive: true })
 
   const output = await run(
