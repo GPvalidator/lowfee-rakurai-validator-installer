@@ -15,7 +15,7 @@ async function installDeps() {
     "pkg-config",
     "libssl-dev",
     "libudev-dev",
-    "libclang-dev"
+    "libclang-dev",
     "llvm",
     "clang",
     "make",
