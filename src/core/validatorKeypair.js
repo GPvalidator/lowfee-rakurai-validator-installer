@@ -1,6 +1,7 @@
 const fs = require("fs")
 const path = require("path")
 const inquirer = require("inquirer")
+const { execSync } = require("child_process")
 const run = require("../utils/run")
 const getSolanaBinary = require("../utils/solanaBin")
 
@@ -8,6 +9,9 @@ const CYAN = "\x1b[36m"
 const YELLOW = "\x1b[33m"
 const BOLD = "\x1b[1m"
 const RESET = "\x1b[0m"
+
+const SOLANA_DIR = "/var/lib/solana"
+const SOLANA_RECOVERY_DIR = "/var/lib/solana/recovery"
 
 function extractSeedPhrase(output) {
   const match = output
@@ -22,7 +26,6 @@ function extractSeedPhrase(output) {
 }
 
 function findValidatorKeypairs() {
-  const searchRoots = [process.cwd(), "/root", "/home", "/opt", "/mnt"]
   const candidateNames = [
     "validator-keypair.json",
     "identity.json"
@@ -30,33 +33,25 @@ function findValidatorKeypairs() {
 
   const found = []
 
-  function walk(dir, depth = 0) {
-    if (!fs.existsSync(dir) || depth > 6) return
-
-    let entries = []
+  for (const name of candidateNames) {
     try {
-      entries = fs.readdirSync(dir)
-    } catch {
-      return
-    }
-
-    for (const entry of entries) {
-      const full = path.join(dir, entry)
-
-      try {
-        const stat = fs.statSync(full)
-
-        if (stat.isDirectory()) {
-          walk(full, depth + 1)
-        } else if (candidateNames.includes(entry)) {
-          found.push(full)
+      const out = execSync(
+        `find / -type f -name "${name}" 2>/dev/null`,
+        {
+          encoding: "utf8",
+          maxBuffer: 10 * 1024 * 1024
         }
-      } catch {}
-    }
-  }
+      )
 
-  for (const root of searchRoots) {
-    walk(root, 0)
+      if (out) {
+        const files = out
+          .split("\n")
+          .map(x => x.trim())
+          .filter(Boolean)
+
+        found.push(...files)
+      }
+    } catch {}
   }
 
   return [...new Set(found)]
@@ -71,13 +66,17 @@ async function createNewValidatorKeypair() {
   console.log(`${YELLOW}WARNING:${RESET} the recovery seed phrase is highly sensitive. Keep it secure.`)
   console.log("")
 
-  const dataDir = path.join(process.cwd(), "data")
-  const recoveryDir = path.join(dataDir, "recovery")
-  const defaultKeypairPath = path.join(dataDir, "validator-keypair.json")
+  const dataDir = SOLANA_DIR
+  const recoveryDir = SOLANA_RECOVERY_DIR
+  const defaultKeypairPath = path.join(dataDir, "identity.json")
   const defaultSeedPath = path.join(recoveryDir, "validator-seed.txt")
 
   fs.mkdirSync(dataDir, { recursive: true })
   fs.mkdirSync(recoveryDir, { recursive: true })
+
+  try {
+    fs.chmodSync(dataDir, 0o700)
+  } catch {}
 
   const answers = await inquirer.prompt([
     {
@@ -109,23 +108,23 @@ async function createNewValidatorKeypair() {
     {
       type: "input",
       name: "seedPath",
-      message: `${BOLD}${CYAN}Enter path for validator seed file (example: /root/validator-seed.txt):${RESET}`,
+      message: `${BOLD}${CYAN}Enter path for validator seed file:${RESET}`,
       default: defaultSeedPath,
       when: answers => answers.seedMode === "custom",
       validate: input => {
         const value = (input || "").trim()
 
         if (!value) {
-          return "You must specify a file path (example: /root/validator-seed.txt)"
+          return "You must specify a file path"
         }
 
         if (value.endsWith("/")) {
-          return "Invalid path. Please include a filename (example: /root/validator-seed.txt)"
+          return "Invalid path. Please include a filename."
         }
 
         try {
           if (fs.existsSync(value) && fs.statSync(value).isDirectory()) {
-            return "Invalid path. This is a directory. Please specify a file path including the filename."
+            return "Invalid path. This is a directory."
           }
         } catch {}
 
@@ -134,7 +133,7 @@ async function createNewValidatorKeypair() {
     }
   ])
 
-  const keypairPath = answers.keypairPath || defaultKeypairPath
+  const keypairPath = (answers.keypairPath || defaultKeypairPath).trim()
   const keypairDir = path.dirname(keypairPath)
 
   fs.mkdirSync(keypairDir, { recursive: true })
@@ -180,7 +179,7 @@ async function createNewValidatorKeypair() {
   if (answers.seedMode !== "nosave") {
     const seedPath =
       answers.seedMode === "custom"
-        ? (answers.seedPath || defaultSeedPath)
+        ? (answers.seedPath || defaultSeedPath).trim()
         : defaultSeedPath
 
     const seedDir = path.dirname(seedPath)
@@ -273,11 +272,12 @@ async function detectValidatorKeypair() {
         {
           type: "input",
           name: "path",
-          message: `${BOLD}${CYAN}Enter validator keypair path:${RESET}`
+          message: `${BOLD}${CYAN}Enter validator keypair path:${RESET}`,
+          default: "/var/lib/solana/identity.json"
         }
       ])
 
-      identityKeypair = manual.path
+      identityKeypair = manual.path.trim()
     }
 
     if (identityKeypair === "create") {
@@ -306,11 +306,12 @@ async function detectValidatorKeypair() {
       {
         type: "input",
         name: "path",
-        message: `${BOLD}${CYAN}Enter validator keypair path:${RESET}`
+        message: `${BOLD}${CYAN}Enter validator keypair path:${RESET}`,
+        default: "/var/lib/solana/identity.json"
       }
     ])
 
-    identityKeypair = manual.path
+    identityKeypair = manual.path.trim()
   }
 
   if (!fs.existsSync(identityKeypair)) {

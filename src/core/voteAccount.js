@@ -8,7 +8,8 @@ const BOLD = "\x1b[1m"
 const CYAN = "\x1b[36m"
 const YELLOW = "\x1b[33m"
 const GREEN = "\x1b[32m"
-const RED = "\x1b[31m"
+
+const SOLANA_DATA_DIR = "/var/lib/solana"
 
 function fileExists(filePath) {
   try {
@@ -26,7 +27,6 @@ function ensureDir(dirPath) {
 
 function isJsonKeypairFile(filePath) {
   try {
-    if (!fileExists(filePath)) return false
     const raw = fs.readFileSync(filePath, "utf8")
     const parsed = JSON.parse(raw)
     return Array.isArray(parsed) && parsed.length >= 64
@@ -36,116 +36,132 @@ function isJsonKeypairFile(filePath) {
 }
 
 function isLikelyPubkey(value) {
-  return typeof value === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value.trim())
+  return typeof value === "string" &&
+    /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value.trim())
 }
 
 function getPubkeyFromKeypair(solanaKeygen, keypairPath) {
-  try {
-    const pubkey = execSync(
-      `"${solanaKeygen}" pubkey "${keypairPath}"`,
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
-    ).trim()
+  const pubkey = execSync(
+    `"${solanaKeygen}" pubkey "${keypairPath}"`,
+    { encoding: "utf8" }
+  ).trim()
 
-    if (!isLikelyPubkey(pubkey)) {
-      throw new Error(`Invalid pubkey derived from ${keypairPath}`)
-    }
-
-    return pubkey
-  } catch (err) {
-    throw new Error(`Failed to derive pubkey from "${keypairPath}": ${err.message}`)
+  if (!isLikelyPubkey(pubkey)) {
+    throw new Error(`Invalid pubkey derived from ${keypairPath}`)
   }
+
+  return pubkey
 }
 
-function scanKeypairs(searchDir, solanaKeygen) {
-  if (!searchDir || !fileExists(searchDir)) return []
+function scanKeypairs(solanaKeygen) {
+
+  let files = []
+
+  try {
+
+    const out = execSync(
+      `find / -type f -name "*.json" 2>/dev/null`,
+      { encoding: "utf8", maxBuffer: 50 * 1024 * 1024 }
+    )
+
+    files = out.split("\n").map(x => x.trim()).filter(Boolean)
+
+  } catch {
+    return []
+  }
 
   const results = []
-  const entries = fs.readdirSync(searchDir, { withFileTypes: true })
 
-  for (const entry of entries) {
-    if (!entry.isFile()) continue
-    if (!entry.name.endsWith(".json")) continue
+  for (const file of files) {
 
-    const fullPath = path.join(searchDir, entry.name)
-    if (!isJsonKeypairFile(fullPath)) continue
+    if (!isJsonKeypairFile(file)) continue
 
     try {
-      const pubkey = getPubkeyFromKeypair(solanaKeygen, fullPath)
+
+      const pubkey = getPubkeyFromKeypair(solanaKeygen, file)
+
       results.push({
-        file: fullPath,
-        name: entry.name,
+        file,
+        name: path.basename(file),
         pubkey
       })
-    } catch {
-      // ignore invalid files
-    }
+
+    } catch {}
+
   }
 
   return results
 }
 
-function scanVoteKeypairs(searchDir, solanaKeygen) {
-  return scanKeypairs(searchDir, solanaKeygen).filter((item) => {
+function scanVoteKeypairs(solanaKeygen) {
+
+  return scanKeypairs(solanaKeygen).filter(item => {
+
     const lower = item.name.toLowerCase()
+
     return (
       lower.includes("vote") ||
       lower.includes("validator-vote") ||
       lower.includes("vote-account")
     )
+
   })
+
 }
 
-function scanWithdrawerKeypairs(searchDir, solanaKeygen) {
-  return scanKeypairs(searchDir, solanaKeygen).filter((item) => {
+function scanWithdrawerKeypairs(solanaKeygen) {
+
+  return scanKeypairs(solanaKeygen).filter(item => {
+
     const lower = item.name.toLowerCase()
+
     return (
       lower.includes("withdrawer") ||
       lower.includes("authorized-withdrawer") ||
       lower.includes("withdraw")
     )
+
   })
-}
 
-function buildSuggestedVoteKeypairPath(baseDir) {
-  return path.join(baseDir, "vote-account-keypair.json")
-}
-
-function buildSuggestedWithdrawerKeypairPath(baseDir) {
-  return path.join(baseDir, "authorized-withdrawer-keypair.json")
 }
 
 function createKeypairFile(solanaKeygen, outputPath) {
+
   const resolvedPath = path.resolve(outputPath)
+
   ensureDir(path.dirname(resolvedPath))
 
-  try {
-    execSync(
-      `"${solanaKeygen}" new --no-bip39-passphrase -o "${resolvedPath}" --force`,
-      { stdio: "inherit" }
-    )
-  } catch (err) {
-    throw new Error(`Failed to create keypair at "${resolvedPath}": ${err.message}`)
-  }
+  execSync(
+    `"${solanaKeygen}" new --no-bip39-passphrase -o "${resolvedPath}" --force`,
+    { stdio: "inherit" }
+  )
 
   return {
     file: resolvedPath,
     pubkey: getPubkeyFromKeypair(solanaKeygen, resolvedPath)
   }
+
 }
 
 async function promptKeypairPath(messageText) {
+
   const { keypairPath } = await inquirer.prompt([
     {
       type: "input",
       name: "keypairPath",
       message: `${BOLD}${CYAN}${messageText}${RESET}`,
       validate: (input) => {
-        if (!input || !input.trim()) return "Path is required"
+
+        if (!input || !input.trim())
+          return "Path is required"
 
         const resolved = path.resolve(input.trim())
 
-        if (!fileExists(resolved)) return "File does not exist"
-        if (!isJsonKeypairFile(resolved)) return "File is not a valid Solana keypair JSON"
+        if (!fileExists(resolved))
+          return "File does not exist"
+
+        if (!isJsonKeypairFile(resolved))
+          return "File is not a valid Solana keypair"
 
         return true
       }
@@ -153,29 +169,41 @@ async function promptKeypairPath(messageText) {
   ])
 
   return path.resolve(keypairPath.trim())
+
 }
 
 async function promptPubkey(messageText) {
+
   const { pubkey } = await inquirer.prompt([
     {
       type: "input",
       name: "pubkey",
       message: `${BOLD}${CYAN}${messageText}${RESET}`,
       validate: (input) => {
-        if (!input || !input.trim()) return "Pubkey is required"
-        if (!isLikelyPubkey(input.trim())) return "Enter a valid Solana pubkey"
+
+        if (!input || !input.trim())
+          return "Pubkey required"
+
+        if (!isLikelyPubkey(input.trim()))
+          return "Invalid pubkey"
+
         return true
       }
     }
   ])
 
   return pubkey.trim()
+
 }
 
-async function createNewVoteKeypair(solanaKeygen, outputDir = process.cwd()) {
-  const defaultPath = buildSuggestedVoteKeypairPath(outputDir)
-   console.log("DEBUG outputDir:", outputDir)
-   console.log("DEBUG defaultPath:", defaultPath)
+async function createNewVoteKeypair(solanaKeygen) {
+
+  ensureDir(SOLANA_DATA_DIR)
+
+  const defaultPath = path.join(
+    SOLANA_DATA_DIR,
+    "vote-account-keypair.json"
+  )
 
   const { destination } = await inquirer.prompt([
     {
@@ -184,15 +212,24 @@ async function createNewVoteKeypair(solanaKeygen, outputDir = process.cwd()) {
       default: defaultPath,
       message: `${BOLD}${CYAN}Path to save new vote account keypair:${RESET}`,
       validate: (input) => {
-        if (!input || !input.trim()) return "Destination path is required"
+
+        if (!input || !input.trim())
+          return "Destination required"
+
         const dir = path.dirname(path.resolve(input.trim()))
-        if (!fileExists(dir)) return "Destination directory does not exist"
+
+        if (!fileExists(dir))
+          return "Directory does not exist"
+
         return true
       }
     }
   ])
 
-  const created = createKeypairFile(solanaKeygen, destination.trim())
+  const created = createKeypairFile(
+    solanaKeygen,
+    destination.trim()
+  )
 
   console.log(`${GREEN}Created vote account keypair:${RESET} ${created.file}`)
   console.log(`${GREEN}Vote account pubkey:${RESET} ${created.pubkey}`)
@@ -202,21 +239,22 @@ async function createNewVoteKeypair(solanaKeygen, outputDir = process.cwd()) {
     voteKeypair: created.file,
     needsCreateOnChain: true
   }
+
 }
 
-async function selectVoteAccount({
-  solanaKeygen,
-  searchDir = process.cwd(),
-  outputDir = searchDir
-}) {
-  const detectedVotes = scanVoteKeypairs(searchDir, solanaKeygen)
+async function selectVoteAccount({ solanaKeygen }) {
+
+  const detectedVotes = scanVoteKeypairs(solanaKeygen)
+
   const choices = []
 
   for (const { file, pubkey, name } of detectedVotes) {
+
     choices.push({
       name: `${name} (${pubkey})`,
       value: { mode: "detected", file, pubkey }
     })
+
   }
 
   choices.push({
@@ -244,43 +282,56 @@ async function selectVoteAccount({
   ])
 
   if (vote.mode === "detected") {
+
     return {
       votePubkey: vote.pubkey,
       voteKeypair: vote.file,
       needsCreateOnChain: false
     }
+
   }
 
   if (vote.mode === "manual-pubkey") {
-    const votePubkey = await promptPubkey("Enter existing vote account pubkey:")
+
+    const votePubkey =
+      await promptPubkey("Enter vote account pubkey:")
+
     return {
       votePubkey,
       voteKeypair: null,
       needsCreateOnChain: false
     }
+
   }
 
   if (vote.mode === "manual-keypair") {
-    const voteKeypair = await promptKeypairPath("Enter path to existing vote account keypair JSON:")
-    const votePubkey = getPubkeyFromKeypair(solanaKeygen, voteKeypair)
+
+    const voteKeypair =
+      await promptKeypairPath(
+        "Enter vote account keypair path:"
+      )
+
+    const votePubkey =
+      getPubkeyFromKeypair(solanaKeygen, voteKeypair)
 
     return {
       votePubkey,
       voteKeypair,
       needsCreateOnChain: false
     }
+
   }
 
-  return createNewVoteKeypair(solanaKeygen, outputDir)
+  return createNewVoteKeypair(solanaKeygen)
+
 }
 
 async function selectAuthorizedWithdrawer({
   solanaKeygen,
-  searchDir = process.cwd(),
-  outputDir = searchDir,
   validatorPubkey = null,
   validatorKeypair = null
 }) {
+
   const choices = [
     {
       name: "Create new authorized withdrawer keypair",
@@ -289,6 +340,7 @@ async function selectAuthorizedWithdrawer({
   ]
 
   if (validatorPubkey && validatorKeypair) {
+
     choices.push({
       name: `Use validator-keypair as authorized withdrawer (${validatorPubkey})`,
       value: {
@@ -297,10 +349,11 @@ async function selectAuthorizedWithdrawer({
         keypair: validatorKeypair
       }
     })
+
   }
 
   choices.push({
-    name: "Use an existing authorized withdrawer (keypair or pubkey)",
+    name: "Use existing authorized withdrawer",
     value: { mode: "existing" }
   })
 
@@ -314,237 +367,93 @@ async function selectAuthorizedWithdrawer({
   ])
 
   if (withdrawer.mode === "use-validator") {
+
     return {
       authorizedWithdrawerPubkey: withdrawer.pubkey,
       authorizedWithdrawerKeypair: withdrawer.keypair,
-      authorizedWithdrawerCreated: false,
-      authorizedWithdrawerUsesValidatorIdentity: true,
-      authorizedWithdrawerSource: "validator-keypair"
+      authorizedWithdrawerCreated: false
     }
+
   }
 
   if (withdrawer.mode === "create") {
-    const defaultPath = buildSuggestedWithdrawerKeypairPath(outputDir)
+
+    ensureDir(SOLANA_DATA_DIR)
+
+    const defaultPath = path.join(
+      SOLANA_DATA_DIR,
+      "authorized-withdrawer-keypair.json"
+    )
 
     const { destination } = await inquirer.prompt([
       {
         type: "input",
         name: "destination",
         default: defaultPath,
-        message: `${BOLD}${CYAN}Path to save new authorized withdrawer keypair:${RESET}`,
-        validate: (input) => {
-          if (!input || !input.trim()) return "Destination path is required"
-          const dir = path.dirname(path.resolve(input.trim()))
-          if (!fileExists(dir)) return "Destination directory does not exist"
-          return true
-        }
+        message: `${BOLD}${CYAN}Path to save new authorized withdrawer keypair:${RESET}`
       }
     ])
 
-    const created = createKeypairFile(solanaKeygen, destination.trim())
-
-    console.log(`${GREEN}Created authorized withdrawer keypair:${RESET} ${created.file}`)
-    console.log(`${GREEN}Authorized withdrawer pubkey:${RESET} ${created.pubkey}`)
-    console.log(
-      `${YELLOW}Important:${RESET} keep this keypair safe and preferably offline.`
+    const created = createKeypairFile(
+      solanaKeygen,
+      destination.trim()
     )
+
+    console.log(`${GREEN}Created withdrawer keypair:${RESET} ${created.file}`)
+    console.log(`${GREEN}Withdrawer pubkey:${RESET} ${created.pubkey}`)
 
     return {
       authorizedWithdrawerPubkey: created.pubkey,
       authorizedWithdrawerKeypair: created.file,
-      authorizedWithdrawerCreated: true,
-      authorizedWithdrawerUsesValidatorIdentity: false,
-      authorizedWithdrawerSource: "created"
+      authorizedWithdrawerCreated: true
     }
+
   }
 
-  const detectedWithdrawers = scanWithdrawerKeypairs(searchDir, solanaKeygen)
-  const existingChoices = []
+  const detected = scanWithdrawerKeypairs(solanaKeygen)
 
-  for (const { file, pubkey, name } of detectedWithdrawers) {
-    existingChoices.push({
-      name: `${name} (${pubkey})`,
-      value: { mode: "detected-keypair", file, pubkey }
-    })
-  }
+  const existingChoices = detected.map(item => ({
+    name: `${item.name} (${item.pubkey})`,
+    value: item
+  }))
 
   existingChoices.push({
-    name: "Enter path to existing authorized withdrawer keypair JSON",
-    value: { mode: "manual-keypair" }
+    name: "Enter withdrawer keypair path manually",
+    value: { manual: true }
   })
 
-  existingChoices.push({
-    name: "Enter authorized withdrawer pubkey manually",
-    value: { mode: "manual-pubkey" }
-  })
-
-  const { existingWithdrawer } = await inquirer.prompt([
+  const { selected } = await inquirer.prompt([
     {
       type: "list",
-      name: "existingWithdrawer",
-      message: `${BOLD}${CYAN}Select existing authorized withdrawer source:${RESET}`,
+      name: "selected",
+      message: `${BOLD}${CYAN}Select withdrawer:${RESET}`,
       choices: existingChoices
     }
   ])
 
-  if (existingWithdrawer.mode === "detected-keypair") {
-    return {
-      authorizedWithdrawerPubkey: existingWithdrawer.pubkey,
-      authorizedWithdrawerKeypair: existingWithdrawer.file,
-      authorizedWithdrawerCreated: false,
-      authorizedWithdrawerUsesValidatorIdentity: false,
-      authorizedWithdrawerSource: "existing-detected-keypair"
-    }
-  }
+  if (selected.manual) {
 
-  if (existingWithdrawer.mode === "manual-keypair") {
-    const keypair = await promptKeypairPath("Enter path to authorized withdrawer keypair JSON:")
-    const pubkey = getPubkeyFromKeypair(solanaKeygen, keypair)
+    const keypair =
+      await promptKeypairPath("Enter withdrawer keypair path:")
+
+    const pubkey =
+      getPubkeyFromKeypair(solanaKeygen, keypair)
 
     return {
       authorizedWithdrawerPubkey: pubkey,
-      authorizedWithdrawerKeypair: keypair,
-      authorizedWithdrawerCreated: false,
-      authorizedWithdrawerUsesValidatorIdentity: false,
-      authorizedWithdrawerSource: "existing-manual-keypair"
+      authorizedWithdrawerKeypair: keypair
     }
-  }
 
-  const pubkey = await promptPubkey("Enter authorized withdrawer pubkey:")
-
-  return {
-    authorizedWithdrawerPubkey: pubkey,
-    authorizedWithdrawerKeypair: null,
-    authorizedWithdrawerCreated: false,
-    authorizedWithdrawerUsesValidatorIdentity: false,
-    authorizedWithdrawerSource: "existing-manual-pubkey"
-  }
-}
-
-function buildCreateVoteAccountCommand({
-  solanaPath,
-  voteKeypair,
-  validatorKeypair,
-  authorizedWithdrawerKeypair,
-  commission = 0,
-  rpcUrl = null
-}) {
-  if (!solanaPath) throw new Error("solanaPath is required")
-  if (!voteKeypair) throw new Error("voteKeypair is required")
-  if (!validatorKeypair) throw new Error("validatorKeypair is required")
-  if (!authorizedWithdrawerKeypair) {
-    throw new Error("authorizedWithdrawerKeypair is required to build create-vote-account command")
-  }
-
-  const parts = [
-    `"${solanaPath}" create-vote-account`,
-    `"${voteKeypair}"`,
-    `"${validatorKeypair}"`,
-    `"${authorizedWithdrawerKeypair}"`,
-    `--commission ${commission}`,
-    `--fee-payer "${validatorKeypair}"`
-  ]
-
-  if (rpcUrl) {
-    parts.push(`--url "${rpcUrl}"`)
-  }
-
-  return parts.join(" ")
-}
-
-async function setupVoteAndWithdrawer({
-  solanaKeygen,
-  solanaPath,
-  rpcUrl = null,
-  searchDir = process.cwd(),
-  outputDir = searchDir,
-  validatorPubkey,
-  validatorKeypair,
-  commission = 0
-}) {
-
-  if (!solanaKeygen) throw new Error("solanaKeygen path is required")
-  if (!validatorPubkey) throw new Error("validatorPubkey is required")
-  if (!validatorKeypair) throw new Error("validatorKeypair is required")
-
-  const vote = await selectVoteAccount({
-    solanaKeygen,
-    searchDir,
-    outputDir
-  })
-
-  const withdrawer = await selectAuthorizedWithdrawer({
-    solanaKeygen,
-    searchDir,
-    outputDir,
-    validatorPubkey,
-    validatorKeypair
-  })
-
-  let createVoteAccountCommand = null
-  let createVoteAccountCommandReady = false
-  let createVoteAccountCommandReason = null
-
-  if (vote.needsCreateOnChain) {
-    if (!withdrawer.authorizedWithdrawerKeypair) {
-      createVoteAccountCommandReason =
-        "Authorized withdrawer was provided only as pubkey, so automatic create-vote-account command cannot be built from this machine."
-      console.log(`${YELLOW}${createVoteAccountCommandReason}${RESET}`)
-    } else if (!solanaPath) {
-      createVoteAccountCommandReason =
-        "solanaPath not provided, so create-vote-account command was not generated."
-      console.log(`${YELLOW}${createVoteAccountCommandReason}${RESET}`)
-    } else {
-     createVoteAccountCommand = buildCreateVoteAccountCommand({
-  solanaPath,
-  voteKeypair: vote.voteKeypair,
-  validatorKeypair,
-  authorizedWithdrawerKeypair: withdrawer.authorizedWithdrawerKeypair,
-  commission,
-  rpcUrl
-})
-
-      createVoteAccountCommandReady = true
-    }
   }
 
   return {
-    validatorPubkey,
-    validatorKeypair,
-
-    votePubkey: vote.votePubkey,
-    voteKeypair: vote.voteKeypair,
-    needsCreateVoteAccountOnChain: vote.needsCreateOnChain,
-
-    authorizedWithdrawerPubkey: withdrawer.authorizedWithdrawerPubkey,
-    authorizedWithdrawerKeypair: withdrawer.authorizedWithdrawerKeypair,
-    authorizedWithdrawerCreated: withdrawer.authorizedWithdrawerCreated,
-    authorizedWithdrawerUsesValidatorIdentity: withdrawer.authorizedWithdrawerUsesValidatorIdentity,
-    authorizedWithdrawerSource: withdrawer.authorizedWithdrawerSource,
-
-    createVoteAccountCommandReady,
-    createVoteAccountCommandReason,
-    createVoteAccountCommand
+    authorizedWithdrawerPubkey: selected.pubkey,
+    authorizedWithdrawerKeypair: selected.file
   }
+
 }
 
 module.exports = {
-  fileExists,
-  ensureDir,
-  isJsonKeypairFile,
-  isLikelyPubkey,
-  getPubkeyFromKeypair,
-  scanKeypairs,
-  scanVoteKeypairs,
-  scanWithdrawerKeypairs,
-  buildSuggestedVoteKeypairPath,
-  buildSuggestedWithdrawerKeypairPath,
-  createKeypairFile,
-  promptKeypairPath,
-  promptPubkey,
-  createNewVoteKeypair,
   selectVoteAccount,
-  selectAuthorizedWithdrawer,
-  buildCreateVoteAccountCommand,
-  setupVoteAndWithdrawer
+  selectAuthorizedWithdrawer
 }
