@@ -107,9 +107,12 @@ async function extractScheduler(repoDir) {
 }
 
 function detectLibclangPath() {
+  // Estrategia 1: buscar cualquier archivo libclang*.so* en /usr
+  // Cubre todos los patrones de Ubuntu:
+  //   libclang.so, libclang.so.1, libclang-14.so.1, libclang-18.so.1, etc.
   try {
     const found = execSync(
-      `find /usr -type f \$begin:math:text$ \-name \"libclang\.so\" \-o \-name \"libclang\.so\.\*\" \\$end:math:text$ 2>/dev/null | head -n 1`,
+      `find /usr -type f -name "libclang*.so*" 2>/dev/null | head -n 1`,
       { encoding: "utf8" }
     ).trim()
 
@@ -118,17 +121,73 @@ function detectLibclangPath() {
     }
   } catch {}
 
+  // Estrategia 2: buscar via ldconfig (si está en el cache del sistema)
+  try {
+    const ldconfig = execSync(
+      `ldconfig -p 2>/dev/null | grep libclang | awk '{print $NF}' | head -n 1`,
+      { encoding: "utf8" }
+    ).trim()
+
+    if (ldconfig && fs.existsSync(ldconfig)) {
+      return path.dirname(ldconfig)
+    }
+  } catch {}
+
+  // Estrategia 3: buscar directorios llvm conocidos ordenados por versión descendente
+  const llvmVersions = [19, 18, 17, 16, 15, 14, 13, 12, 11, 10]
+  for (const v of llvmVersions) {
+    const candidate = `/usr/lib/llvm-${v}/lib`
+    try {
+      if (!fs.existsSync(candidate)) continue
+      const files = fs.readdirSync(candidate)
+      const match = files.find(f => f.startsWith("libclang") && f.includes(".so"))
+      if (match) {
+        return candidate
+      }
+    } catch {}
+  }
+
+  // Estrategia 4: rutas fijas conocidas para Ubuntu sin versión explícita
+  const fallbackPaths = [
+    "/usr/lib/x86_64-linux-gnu",
+    "/usr/lib/aarch64-linux-gnu",
+    "/usr/lib64",
+    "/usr/lib",
+  ]
+  for (const dir of fallbackPaths) {
+    try {
+      if (!fs.existsSync(dir)) continue
+      const files = fs.readdirSync(dir)
+      const match = files.find(f => f.startsWith("libclang") && f.includes(".so"))
+      if (match) {
+        return dir
+      }
+    } catch {}
+  }
+
   return ""
 }
 
 function ensureLibclangSymlink(libclangPath) {
   const so = path.join(libclangPath, "libclang.so")
-  const so1 = path.join(libclangPath, "libclang.so.1")
+
+  // Si ya existe libclang.so, no hay nada que hacer
+  if (fs.existsSync(so)) return
 
   try {
-    if (!fs.existsSync(so) && fs.existsSync(so1)) {
-      console.log("Creating libclang.so symlink")
-      fs.symlinkSync("libclang.so.1", so)
+    const files = fs.readdirSync(libclangPath)
+
+    // Buscar cualquier libclang*.so* para usar como destino del symlink
+    // Priorizar libclang.so.1 si existe, sino el primero que encontremos
+    const candidates = files.filter(
+      f => f.startsWith("libclang") && f.includes(".so")
+    )
+
+    const target = candidates.find(f => f === "libclang.so.1") || candidates[0]
+
+    if (target) {
+      console.log(`Creating libclang.so symlink -> ${target}`)
+      fs.symlinkSync(target, so)
     }
   } catch (err) {
     console.log("Warning creating libclang symlink:", err.message)
@@ -185,4 +244,3 @@ async function setupScheduler(ctx) {
 }
 
 module.exports = setupScheduler
-

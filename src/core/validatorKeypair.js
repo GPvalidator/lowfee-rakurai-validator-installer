@@ -4,12 +4,10 @@ const inquirer = require("inquirer")
 const { execSync } = require("child_process")
 const run = require("../utils/run")
 const getSolanaBinary = require("../utils/solanaBin")
-
 const CYAN = "\x1b[36m"
 const YELLOW = "\x1b[33m"
 const BOLD = "\x1b[1m"
 const RESET = "\x1b[0m"
-
 const SOLANA_DIR = "/var/lib/solana"
 const SOLANA_RECOVERY_DIR = "/var/lib/solana/recovery"
 
@@ -17,11 +15,9 @@ function extractSeedPhrase(output) {
   const match = output
     ? output.toString().match(/recover your new keypair:\s*([\s\S]*?)=+/i)
     : null
-
   if (match && match[1]) {
     return match[1].replace(/\n/g, " ").trim()
   }
-
   return ""
 }
 
@@ -31,27 +27,39 @@ function findValidatorKeypairs() {
     "identity.json"
   ]
 
+  // Solo buscar en directorios relevantes, no en todo el sistema
+  const searchDirs = [
+    "/root",
+    "/home",
+    "/var/lib/solana",
+    "/var/lib",
+    "/etc/solana",
+    "/opt/solana",
+    "/opt",
+  ]
+
   const found = []
 
-  for (const name of candidateNames) {
-    try {
-      const out = execSync(
-        `find / -type f -name "${name}" 2>/dev/null`,
-        {
-          encoding: "utf8",
-          maxBuffer: 10 * 1024 * 1024
+  for (const dir of searchDirs) {
+    if (!fs.existsSync(dir)) continue
+    for (const name of candidateNames) {
+      try {
+        const out = execSync(
+          `find "${dir}" -maxdepth 5 -type f -name "${name}" 2>/dev/null`,
+          {
+            encoding: "utf8",
+            maxBuffer: 10 * 1024 * 1024
+          }
+        )
+        if (out) {
+          const files = out
+            .split("\n")
+            .map(x => x.trim())
+            .filter(Boolean)
+          found.push(...files)
         }
-      )
-
-      if (out) {
-        const files = out
-          .split("\n")
-          .map(x => x.trim())
-          .filter(Boolean)
-
-        found.push(...files)
-      }
-    } catch {}
+      } catch {}
+    }
   }
 
   return [...new Set(found)]
@@ -60,24 +68,19 @@ function findValidatorKeypairs() {
 async function createNewValidatorKeypair() {
   const solanaKeygen = getSolanaBinary("solana-keygen")
   console.log(`Using solana-keygen: ${solanaKeygen}`)
-
   console.log("")
   console.log("Creating a new validator keypair")
   console.log(`${YELLOW}WARNING:${RESET} the recovery seed phrase is highly sensitive. Keep it secure.`)
   console.log("")
-
   const dataDir = SOLANA_DIR
   const recoveryDir = SOLANA_RECOVERY_DIR
   const defaultKeypairPath = path.join(dataDir, "identity.json")
   const defaultSeedPath = path.join(recoveryDir, "validator-seed.txt")
-
   fs.mkdirSync(dataDir, { recursive: true })
   fs.mkdirSync(recoveryDir, { recursive: true })
-
   try {
     fs.chmodSync(dataDir, 0o700)
   } catch {}
-
   const answers = await inquirer.prompt([
     {
       type: "input",
@@ -113,31 +116,24 @@ async function createNewValidatorKeypair() {
       when: answers => answers.seedMode === "custom",
       validate: input => {
         const value = (input || "").trim()
-
         if (!value) {
           return "You must specify a file path"
         }
-
         if (value.endsWith("/")) {
           return "Invalid path. Please include a filename."
         }
-
         try {
           if (fs.existsSync(value) && fs.statSync(value).isDirectory()) {
             return "Invalid path. This is a directory."
           }
         } catch {}
-
         return true
       }
     }
   ])
-
   const keypairPath = (answers.keypairPath || defaultKeypairPath).trim()
   const keypairDir = path.dirname(keypairPath)
-
   fs.mkdirSync(keypairDir, { recursive: true })
-
   const output = await run(
     solanaKeygen,
     [
@@ -149,42 +145,32 @@ async function createNewValidatorKeypair() {
     ],
     { capture: true }
   )
-
   if (!fs.existsSync(keypairPath)) {
     throw new Error(`Failed to create validator keypair: ${keypairPath}`)
   }
-
   fs.chmodSync(keypairPath, 0o600)
-
   let identityPubkey = "unknown"
-
   try {
     const pubkeyOut = await run(
       solanaKeygen,
       ["pubkey", keypairPath],
       { capture: true }
     )
-
     if (pubkeyOut) {
       identityPubkey = pubkeyOut.toString().trim()
     }
   } catch (err) {
     console.log(`WARN: failed to read validator pubkey for ${keypairPath}: ${err.shortMessage || err.message}`)
   }
-
   const seedPhrase = extractSeedPhrase(output)
-
   let identitySeedPath
-
   if (answers.seedMode !== "nosave") {
     const seedPath =
       answers.seedMode === "custom"
         ? (answers.seedPath || defaultSeedPath).trim()
         : defaultSeedPath
-
     const seedDir = path.dirname(seedPath)
     fs.mkdirSync(seedDir, { recursive: true })
-
     const seedContent = [
       "LOW FEE VALIDATION — VALIDATOR IDENTITY RECOVERY",
       `Created: ${new Date().toISOString()}`,
@@ -195,19 +181,14 @@ async function createNewValidatorKeypair() {
       seedPhrase || "(Could not parse seed phrase automatically from solana-keygen output)",
       ""
     ].join("\n")
-
     fs.writeFileSync(seedPath, seedContent, { mode: 0o600 })
     fs.chmodSync(seedPath, 0o600)
-
     identitySeedPath = seedPath
-
     console.log(`Validator seed saved to: ${seedPath}`)
     console.log(`${YELLOW}IMPORTANT:${RESET} This file contains sensitive recovery data. Keep it secure.`)
   }
-
   console.log(`New validator keypair created: ${keypairPath}`)
   console.log(`Validator identity: ${identityPubkey}`)
-
   return {
     identityKeypair: keypairPath,
     identityPubkey,
@@ -218,19 +199,13 @@ async function createNewValidatorKeypair() {
 async function detectValidatorKeypair() {
   const solanaKeygen = getSolanaBinary("solana-keygen")
   console.log(`Using solana-keygen: ${solanaKeygen}`)
-
   console.log("Searching for validator keypair files...")
-
   const found = findValidatorKeypairs()
-
   let identityKeypair = ""
-
   if (found.length > 0) {
     const choices = []
-
     for (const file of found) {
       let pubkey = "unknown"
-
       try {
         const result = await run(solanaKeygen, ["pubkey", file], { capture: true })
         if (result) {
@@ -239,23 +214,19 @@ async function detectValidatorKeypair() {
       } catch (err) {
         console.log(`WARN: failed to read pubkey for ${file}: ${err.shortMessage || err.message}`)
       }
-
       choices.push({
         name: `${file} (${pubkey})`,
         value: file
       })
     }
-
     choices.push({
       name: "Enter path manually",
       value: "manual"
     })
-
     choices.push({
       name: "Create new validator keypair",
       value: "create"
     })
-
     const answer = await inquirer.prompt([
       {
         type: "list",
@@ -264,9 +235,7 @@ async function detectValidatorKeypair() {
         choices
       }
     ])
-
     identityKeypair = answer.keypair
-
     if (identityKeypair === "manual") {
       const manual = await inquirer.prompt([
         {
@@ -276,16 +245,13 @@ async function detectValidatorKeypair() {
           default: "/var/lib/solana/identity.json"
         }
       ])
-
       identityKeypair = manual.path.trim()
     }
-
     if (identityKeypair === "create") {
       return await createNewValidatorKeypair()
     }
   } else {
     console.log("No validator keypair detected automatically.")
-
     const answer = await inquirer.prompt([
       {
         type: "list",
@@ -297,11 +263,9 @@ async function detectValidatorKeypair() {
         ]
       }
     ])
-
     if (answer.mode === "create") {
       return await createNewValidatorKeypair()
     }
-
     const manual = await inquirer.prompt([
       {
         type: "input",
@@ -310,32 +274,25 @@ async function detectValidatorKeypair() {
         default: "/var/lib/solana/identity.json"
       }
     ])
-
     identityKeypair = manual.path.trim()
   }
-
   if (!fs.existsSync(identityKeypair)) {
     throw new Error(`Keypair file not found: ${identityKeypair}`)
   }
-
   let identityPubkey = "unknown"
-
   try {
     const result = await run(
       solanaKeygen,
       ["pubkey", identityKeypair],
       { capture: true }
     )
-
     if (result) {
       identityPubkey = result.toString().trim()
     }
   } catch (err) {
     console.log(`WARN: failed to read validator pubkey for ${identityKeypair}: ${err.shortMessage || err.message}`)
   }
-
   console.log("Validator identity:", identityPubkey)
-
   return {
     identityKeypair,
     identityPubkey

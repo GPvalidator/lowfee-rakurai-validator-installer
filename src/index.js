@@ -304,6 +304,9 @@ const raa = await resolveRaa({
       cluster: cluster.cluster,
       repoDir: repo,
       raaPubkey: raa.raaPubkey,
+      rewardsAuthority: DEFAULT_REWARDS_AUTHORITY,
+      programId: cluster.program,
+      rewardProgramId: cluster.rewardProgram,
       signature: raa.signature
     })
 
@@ -315,7 +318,7 @@ const raa = await resolveRaa({
 
     const validatorScript = await generateValidatorScript({
       cluster: cluster.cluster,
-      validatorBinary: legacyBinary,
+      validatorBinary: legacyBinary.validatorBinary,
       validatorKeypair: validator.identityKeypair,
       voteKeypair: vote.voteKeypair,
       programId: cluster.program,
@@ -330,13 +333,16 @@ const raa = await resolveRaa({
       installMode,
       cluster,
       repoDir: repo,
-      legacyBinary,
+      legacyBinary: legacyBinary.validatorBinary,
       identityKeypair: validator.identityKeypair,
       identityPubkey: validator.identityPubkey,
       voteKeypair: vote.voteKeypair,
       votePubkey: vote.votePubkey,
       commissionBps: commission.commissionBps,
-      raaPubkey: raa.raaPubkey
+      raaPubkey: raa.raaPubkey,
+      rewardsAuthority: DEFAULT_REWARDS_AUTHORITY,
+      programId: cluster.program,
+      rewardProgramId: cluster.rewardProgram
     })
 
     step("🧩", "Generate Systemd Service")
@@ -351,14 +357,14 @@ const raa = await resolveRaa({
       {
         type: "confirm",
         name: "startNow",
-        message: "Start validator service now?",
+        message: `${BOLD}${CYAN}Start validator service now?${RESET}`,
         default: true
       }
     ])
 
     if (startNow) {
       step("▶️", "Start Systemd Service")
-      await startSystemdService(service.serviceName)
+      await startSystemdService(service)
     }
 
     console.log("")

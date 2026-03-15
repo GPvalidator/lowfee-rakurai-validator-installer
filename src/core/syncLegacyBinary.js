@@ -29,6 +29,14 @@ async function syncLegacyBinary(repoDir) {
     )
   }
 
+  // Register library path so agave-validator can find the scheduler
+  const { execSync } = require("child_process")
+  try {
+    require("fs").writeFileSync("/etc/ld.so.conf.d/rakurai.conf", dstDir + "\n")
+    execSync("ldconfig")
+  } catch (err) {
+    console.log("Warning: could not register library path:", err.message)
+  }
   return {
     legacyDir: dstDir,
     validatorBinary: validatorDst,
