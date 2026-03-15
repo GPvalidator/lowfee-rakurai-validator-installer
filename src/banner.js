@@ -44,6 +44,28 @@ function commandExists(cmd) {
   return res.status === 0
 }
 
+function ensureLolcat() {
+  if (commandExists("lolcat")) return true
+
+  // Intentar instalar via apt
+  const apt = spawnSync("bash", ["-lc", "apt-get install -y lolcat 2>/dev/null"], {
+    stdio: "pipe",
+    encoding: "utf8"
+  })
+  if (apt.status === 0 && commandExists("lolcat")) return true
+
+  // Intentar instalar via gem (Ruby)
+  if (commandExists("gem")) {
+    const gem = spawnSync("bash", ["-lc", "gem install lolcat 2>/dev/null"], {
+      stdio: "pipe",
+      encoding: "utf8"
+    })
+    if (gem.status === 0 && commandExists("lolcat")) return true
+  }
+
+  return false
+}
+
 function getBannerAscii() {
   return [
     "██╗      ██████╗ ██╗    ██╗    ███████╗███████╗███████╗",
@@ -132,7 +154,7 @@ async function banner() {
   console.clear()
   console.log("")
 
-  if (commandExists("lolcat")) {
+  if (ensureLolcat()) {
     bannerLolcat()
   } else {
     bannerPlain()
