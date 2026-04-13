@@ -3,6 +3,7 @@ const fs = require("fs")
 const { execSync } = require("child_process")
 const inquirer = require("inquirer")
 const run = require("../utils/run")
+const getSolanaBinary = require("../utils/solanaBin")
 
 const YELLOW = "\x1b[33m"
 const RED = "\x1b[31m"
@@ -178,8 +179,10 @@ async function signRaa({ raaPubkey, identityKeypair }) {
 
   console.log("Signing RAA offchain message...")
 
+  const solanaBin = getSolanaBinary("solana")
+
   const out = await run(
-    "solana",
+    solanaBin,
     ["sign-offchain-message", raaPubkey, "--keypair", identityKeypair],
     { capture: true }
   )
