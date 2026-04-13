@@ -162,18 +162,34 @@ async function extractScheduler(repoDir) {
   return dst
 }
 
+function is64BitElf(filePath) {
+  try {
+    // ELF64 magic: bytes 4-5 are 02 00 (little-endian class=2 means 64-bit)
+    const buf = Buffer.alloc(5)
+    const fd = require("fs").openSync(filePath, "r")
+    require("fs").readSync(fd, buf, 0, 5, 0)
+    require("fs").closeSync(fd)
+    return buf[0] === 0x7f && buf[1] === 0x45 && buf[2] === 0x4c && buf[3] === 0x46 && buf[4] === 0x02
+  } catch {
+    return false
+  }
+}
+
 function detectLibclangPath() {
-  // Estrategia 1: buscar cualquier archivo libclang*.so* en /usr
+  // Estrategia 1: buscar libclang*.so* en /usr, excluyendo el subdirectorio
+  // de runtime interno de clang (/lib/clang/) que contiene libs 32-bit.
   // Cubre todos los patrones de Ubuntu:
   //   libclang.so, libclang.so.1, libclang-14.so.1, libclang-18.so.1, etc.
   try {
-    const found = execSync(
-      `find /usr -type f -name "libclang*.so*" 2>/dev/null | head -n 1`,
+    const allFound = execSync(
+      `find /usr -type f -name "libclang*.so*" ! -path "*/lib/clang/*" 2>/dev/null`,
       { encoding: "utf8" }
-    ).trim()
+    ).trim().split("\n").filter(Boolean)
 
-    if (found) {
-      return path.dirname(found)
+    for (const found of allFound) {
+      if (is64BitElf(found)) {
+        return path.dirname(found)
+      }
     }
   } catch {}
 
