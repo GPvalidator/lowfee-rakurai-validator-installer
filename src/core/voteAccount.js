@@ -187,20 +187,65 @@ function buildCreateVoteAccountCommand({
   ].join(" ")
 }
 
-function createKeypairFile(solanaKeygen, outputPath) {
+function extractSeedPhrase(output) {
+  const match = output
+    ? output.toString().match(/recover your new keypair:\s*([\s\S]*?)=+/i)
+    : null
+  if (match && match[1]) {
+    return match[1].replace(/\n/g, " ").trim()
+  }
+  return ""
+}
+
+function saveSeedFile(keypairPath, pubkey, seedPhrase, label) {
+  const recoveryDir = "/var/lib/solana/recovery"
+  ensureDir(recoveryDir)
+
+  const baseName = path.basename(keypairPath, ".json")
+  const seedPath = path.join(recoveryDir, `${baseName}-seed.txt`)
+
+  const content = [
+    `LOW FEE VALIDATION — ${label.toUpperCase()} RECOVERY`,
+    `Created: ${new Date().toISOString()}`,
+    `Keypair path: ${keypairPath}`,
+    `Pubkey: ${pubkey}`,
+    "",
+    "SEED PHRASE:",
+    seedPhrase || "(Could not parse seed phrase from solana-keygen output)",
+    ""
+  ].join("\n")
+
+  fs.writeFileSync(seedPath, content, { mode: 0o600 })
+  try { fs.chmodSync(seedPath, 0o600) } catch {}
+
+  console.log(`${YELLOW}Seed saved to:${RESET} ${seedPath}`)
+
+  return seedPath
+}
+
+function createKeypairFile(solanaKeygen, outputPath, label) {
 
   const resolvedPath = path.resolve(outputPath)
 
   ensureDir(path.dirname(resolvedPath))
 
-  execSync(
+  const output = execSync(
     `"${solanaKeygen}" new --no-bip39-passphrase -o "${resolvedPath}" --force`,
-    { stdio: "inherit" }
+    { encoding: "utf8" }
   )
+
+  const pubkey = getPubkeyFromKeypair(solanaKeygen, resolvedPath)
+  const seedPhrase = extractSeedPhrase(output)
+
+  let seedPath = null
+  if (seedPhrase) {
+    seedPath = saveSeedFile(resolvedPath, pubkey, seedPhrase, label || path.basename(resolvedPath, ".json"))
+  }
 
   return {
     file: resolvedPath,
-    pubkey: getPubkeyFromKeypair(solanaKeygen, resolvedPath)
+    pubkey,
+    seedPath
   }
 
 }
@@ -286,7 +331,7 @@ async function createNewVoteKeypair(solanaKeygen, outputDir) {
     }
   ])
 
-  const created = createKeypairFile(solanaKeygen, destination.trim())
+  const created = createKeypairFile(solanaKeygen, destination.trim(), "vote account")
 
   console.log(`${GREEN}Created vote account keypair:${RESET} ${created.file}`)
   console.log(`${GREEN}Vote account pubkey:${RESET} ${created.pubkey}`)
@@ -445,7 +490,7 @@ async function selectAuthorizedWithdrawer({
       }
     ])
 
-    const created = createKeypairFile(solanaKeygen, destination.trim())
+    const created = createKeypairFile(solanaKeygen, destination.trim(), "authorized withdrawer")
 
     console.log(`${GREEN}Created withdrawer keypair:${RESET} ${created.file}`)
     console.log(`${GREEN}Withdrawer pubkey:${RESET} ${created.pubkey}`)

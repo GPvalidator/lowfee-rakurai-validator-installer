@@ -2,13 +2,22 @@ const inquirer = require("inquirer")
 
 async function chooseInstallMode(preset) {
   if (preset) {
-    const allowed = ["scratch", "existing", "build"]
+    // map web-generated values to internal mode names
+    const aliasMap = {
+      install: "scratch",
+      update: "existing",
+      scratch: "scratch",
+      existing: "existing",
+      build: "build"
+    }
 
-    if (!allowed.includes(preset)) {
+    const resolved = aliasMap[preset]
+
+    if (!resolved) {
       throw new Error(`Invalid install mode preset: ${preset}`)
     }
 
-    return preset
+    return resolved
   }
 
   const answer = await inquirer.prompt([

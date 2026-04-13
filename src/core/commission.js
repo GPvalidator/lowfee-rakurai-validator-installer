@@ -1,6 +1,16 @@
 const inquirer = require("inquirer")
 
-async function chooseCommission() {
+async function chooseCommission(preset) {
+  if (preset !== undefined && preset !== null) {
+    const parsed = Number(preset)
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10000) {
+      throw new Error(`Invalid commission-bps value: ${preset}. Must be 0-10000.`)
+    }
+    const percent = (parsed / 100).toFixed(2)
+    console.log(`Commission selected: ${parsed} bps (${percent}%)`)
+    return { commissionBps: parsed, percent }
+  }
+
   const choices = [
     { name: "0 bps (0%)", value: 0 },
     { name: "100 bps (1%)", value: 100 },

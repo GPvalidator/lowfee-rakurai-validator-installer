@@ -60,7 +60,7 @@ LimitNOFILE=1000000
 TasksMax=infinity
 
 Environment=RUST_BACKTRACE=1
-Environment=LD_LIBRARY_PATH=${ctx.repoDir}/target/release
+Environment=LD_LIBRARY_PATH=${ctx.repoDir}/target/release:/root/rakurai-validator/target/release
 
 ExecStart=${ctx.scriptPath}
 

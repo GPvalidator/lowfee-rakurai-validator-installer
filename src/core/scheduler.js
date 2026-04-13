@@ -5,7 +5,13 @@ const inquirer = require("inquirer")
 const { execSync } = require("child_process")
 const run = require("../utils/run")
 
-async function chooseSchedulerVersion(osKey, cluster) {
+function extractBaseVersion(rakuraiVersion) {
+  // "v3.1.9-rakurai.0" -> "3.1.9"
+  const m = rakuraiVersion.match(/v?(\d+\.\d+\.\d+)/)
+  return m ? m[1] : null
+}
+
+async function chooseSchedulerVersion(osKey, cluster, rakuraiVersion) {
   console.log("Fetching scheduler versions...")
 
   const res = await axios.get("https://api.rakurai.io/api/v1/scheduler/versions")
@@ -32,11 +38,30 @@ async function chooseSchedulerVersion(osKey, cluster) {
     throw new Error("No scheduler versions available")
   }
 
+  // auto-select: scheduler version MUST match the validator base version
+  // e.g. rakuraiVersion "v3.1.9-rakurai.0" -> scheduler must be "v3.1.9-rakurai.*"
+  const baseVersion = rakuraiVersion ? extractBaseVersion(rakuraiVersion) : null
+
+  if (baseVersion) {
+    const matching = versions.filter(v => extractBaseVersion(v) === baseVersion)
+
+    if (matching.length > 0) {
+      // prefer exact match first, then latest
+      const exact = matching.find(v => v === rakuraiVersion)
+      const selected = exact || matching.sort().reverse()[0]
+      console.log(`Scheduler version auto-selected: ${selected} (matches validator v${baseVersion})`)
+      return selected
+    }
+
+    console.log(`WARNING: No scheduler version found matching validator v${baseVersion}`)
+    console.log("Falling back to manual selection...")
+  }
+
   const ans = await inquirer.prompt([
     {
       type: "list",
       name: "version",
-      message: "Select scheduler version",
+      message: "Select scheduler version (pick one matching your validator version!)",
       choices: versions.sort().reverse()
     }
   ])
@@ -71,10 +96,30 @@ async function downloadScheduler({ repoDir, raaPubkey, signature, version, osKey
   return file
 }
 
+function findSoRecursive(dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      const found = findSoRecursive(full)
+      if (found) return found
+    } else if (entry.name.startsWith("librak") && entry.name.endsWith(".so")) {
+      return full
+    }
+  }
+  return null
+}
+
 async function extractScheduler(repoDir) {
   const file = path.join(repoDir, "rakurai-scheduler.tar.gz")
 
   console.log("Validating archive")
+
+  // list contents for debugging
+  try {
+    const listing = execSync(`tar -tzf "${file}"`, { encoding: "utf8" })
+    console.log("Archive contents:", listing.trim())
+  } catch {}
 
   await run("tar", ["-tzf", file])
 
@@ -85,14 +130,24 @@ async function extractScheduler(repoDir) {
 
   await run("tar", ["-xzf", file, "-C", tmp])
 
+  // search flat first, then recursive (in case archive has subdirectories)
   const files = fs.readdirSync(tmp)
-  const lib = files.find(f => f.startsWith("librak") && f.endsWith(".so"))
+  let lib = files.find(f => f.startsWith("librak") && f.endsWith(".so"))
+  let src = lib ? path.join(tmp, lib) : null
 
-  if (!lib) {
+  if (!src) {
+    // recursive search for .so inside nested dirs
+    src = findSoRecursive(tmp)
+    if (src) {
+      lib = path.basename(src)
+    }
+  }
+
+  if (!src || !lib) {
+    console.log("Files found in extract dir:", files)
     throw new Error("Scheduler library not found in archive")
   }
 
-  const src = path.join(tmp, lib)
   const dstDir = path.join(repoDir, "target", "release")
 
   fs.mkdirSync(dstDir, { recursive: true })
@@ -100,6 +155,7 @@ async function extractScheduler(repoDir) {
   const dst = path.join(dstDir, lib)
 
   fs.copyFileSync(src, dst)
+  fs.chmodSync(dst, 0o755)
 
   console.log("Scheduler copied:", dst)
 
@@ -194,6 +250,18 @@ function ensureLibclangSymlink(libclangPath) {
   }
 }
 
+function getCargoPath() {
+  // ensure we find cargo even if rustup was just installed in this session
+  const candidates = [
+    process.env.HOME + "/.cargo/bin/cargo",
+    "/root/.cargo/bin/cargo"
+  ]
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c
+  }
+  return "cargo"
+}
+
 async function buildValidator(repoDir) {
   console.log("Building validator with Rakurai")
 
@@ -207,13 +275,22 @@ async function buildValidator(repoDir) {
 
   ensureLibclangSymlink(libclangPath)
 
+  const cargoPath = getCargoPath()
+  console.log("Using cargo:", cargoPath)
+
+  // ensure PATH includes cargo/rustup binaries
+  const cargoDir = path.dirname(cargoPath)
+  const envPath = process.env.PATH || ""
+  const fullPath = envPath.includes(cargoDir) ? envPath : `${cargoDir}:${envPath}`
+
   await run(
-    "cargo",
+    cargoPath,
     ["build", "--release", "--features", "build_validator"],
     {
       cwd: repoDir,
       env: {
         ...process.env,
+        PATH: fullPath,
         LIBCLANG_PATH: libclangPath
       }
     }
@@ -221,7 +298,7 @@ async function buildValidator(repoDir) {
 }
 
 async function setupScheduler(ctx) {
-  const schedulerVersion = await chooseSchedulerVersion(ctx.osKey, ctx.cluster)
+  const schedulerVersion = await chooseSchedulerVersion(ctx.osKey, ctx.cluster, ctx.rakuraiVersion)
 
   const archive = await downloadScheduler({
     repoDir: ctx.repoDir,

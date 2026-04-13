@@ -1,7 +1,16 @@
 const axios = require("axios")
 const inquirer = require("inquirer")
 
-async function chooseRakuraiVersion() {
+async function chooseRakuraiVersion(preset) {
+  if (preset) {
+    const versionPattern = /^v\d+\.\d+\.\d+-rakurai\.\d+$/
+    if (!versionPattern.test(preset)) {
+      throw new Error(`Invalid Rakurai version format: ${preset}`)
+    }
+    console.log("Rakurai version selected:", preset)
+    return preset
+  }
+
   console.log("Fetching Rakurai versions from GitHub...")
 
   const res = await axios.get(

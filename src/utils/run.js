@@ -8,6 +8,10 @@ async function run(cmd, args = [], opts = {}) {
     options.cwd = opts.cwd
   }
 
+  if(opts.env){
+    options.env = opts.env
+  }
+
   if(opts.capture){
     const { stdout } = await execa(cmd, args, options)
     return stdout

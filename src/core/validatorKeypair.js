@@ -24,10 +24,12 @@ function extractSeedPhrase(output) {
 function findValidatorKeypairs() {
   const candidateNames = [
     "validator-keypair.json",
-    "identity.json"
+    "identity.json",
+    "id.json",
+    "validator.json",
+    "validator-identity.json"
   ]
 
-  // Solo buscar en directorios relevantes, no en todo el sistema
   const searchDirs = [
     "/root",
     "/home",
@@ -219,7 +221,8 @@ async function detectValidatorKeypair() {
         value: file
       })
     }
-    choices.push({
+    // "Enter path manually" always first so nothing is preselected by accident
+    choices.unshift({
       name: "Enter path manually",
       value: "manual"
     })
@@ -227,11 +230,16 @@ async function detectValidatorKeypair() {
       name: "Create new validator keypair",
       value: "create"
     })
+
+    console.log("")
+    console.log(`${YELLOW}Found ${found.length} keypair(s). Please confirm which one is your validator identity:${RESET}`)
+    console.log("")
+
     const answer = await inquirer.prompt([
       {
         type: "list",
         name: "keypair",
-        message: "Select validator identity keypair",
+        message: `${BOLD}${CYAN}Select validator identity keypair (verify carefully):${RESET}`,
         choices
       }
     ])
