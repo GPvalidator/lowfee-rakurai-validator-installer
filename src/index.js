@@ -16,6 +16,7 @@ const {
 } = require("./core/voteAccount")
 
 const chooseInstallMode = require("./core/installMode")
+const collectSupportBundle = require("./core/supportBundle")
 const banner = require("./banner")
 const { step } = require("./ui")
 const patchValidatorScript = require("./core/validatorPatch")
@@ -149,6 +150,10 @@ MAIN
 async function main() {
 
   await banner()
+
+  // Attach a diagnostics bundle when a previous installation is detected so the
+  // operator keeps a copy of the existing key material before it is regenerated.
+  await collectSupportBundle()
 
   step("🧭", "Select Installation Mode")
   const installMode = await chooseInstallMode(args.mode || null)
